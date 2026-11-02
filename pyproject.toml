@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "steady-pdf-prep"
+version = "1.0.1"
+description = "Prepare a PDF for an upload, locally, with a preview before saving"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{name = "Steady State Studio"}]
+dependencies = ["PySide6==6.11.2", "pypdf==6.19.0", "Pillow==12.3.0", "pypdfium2==5.14.0"]
+
+[project.urls]
+Homepage = "https://steady-state-studio.com/apps/pdf-prep/"
+Repository = "https://github.com/steadystatestudio/pdf-prep"
+Issues = "https://github.com/steadystatestudio/pdf-prep/issues"
+
+[project.gui-scripts]
+steady-pdf-prep = "pdf_prep.app:main"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+build = ["PyInstaller==6.22.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

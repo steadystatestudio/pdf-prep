@@ -1,0 +1,15 @@
+# Open-source components
+
+PDF Prep is MIT-licensed. Its one-folder package uses unmodified Python, PySide6/Shiboken6/Qt, Pillow, pypdf and pypdfium2/PDFium. Complete notices are supplied in `licenses/`; retain them with redistributed packages. `BUILD-INFO.json` records exact dependency versions.
+
+PySide6, Shiboken6 and the included Qt modules use their LGPLv3 alternative. You may modify and replace these shared libraries and reverse engineer the application to debug those modifications. PDF Prep imposes no additional restrictions on those rights. The LGPLv3 and GPLv3 texts are included. The exact Qt and PySide/Shiboken source archives, with upstream third-party source and notices, are available beside the binary on the same [PDF Prep release](https://github.com/steadystatestudio/pdf-prep/releases/tag/v1.0.1). `SOURCE-INDEX.json` gives their official URLs and SHA-256 checksums.
+
+To use modified compatible libraries, copy the extracted application folder and replace the corresponding shared libraries/plugins under `_internal/PySide6` and `_internal/shiboken6`, preserving relative paths. Use matching architecture, Python ABI and compatible Qt/PySide versions from `BUILD-INFO.json`. The application does not enforce library hashes or signatures. If compatibility requires rebuilding, build this MIT source using the commands in the README and your modified dependencies. The retained source archives include upstream build instructions. Qt and the bindings must remain compatible with each other. Package checksums describe the original download; modified packages will have different checksums.
+
+Pillow and pypdf use permissive licenses. pypdfium2 and PDFium include BSD/Apache and third-party licenses supplied with their distribution. PyInstaller uses its bootloader distribution exception. Individual upstream licenses remain authoritative. The build does not bundle an AGPL PDF engine.
+
+## Linux AppImage runtime and library replacement
+
+Extract an AppImage with `./PDF-Prep-x86_64.AppImage --appimage-extract` and work on a copy of `squashfs-root/usr/lib/pdf-prep`. Replace compatible Qt/PySide/Shiboken shared libraries beneath `_internal`, then launch the modified copy through `squashfs-root/AppRun`. The portable archive exposes the same application layout directly. Neither format imposes library signature or hash enforcement.
+
+The AppImage runtime includes static LGPL libfuse. The same release retains the exact type2-runtime source, its libfuse 3.15.0 source and squashfuse 0.5.2 source, identified by checksums in `SOURCE-INDEX.json`. The runtime source includes its Makefile, build scripts and libfuse patch. Build your modified runtime using those sources and upstream instructions, then rebuild the AppImage with `appimagetool --runtime-file YOUR-RUNTIME YOUR-APPDIR modified.AppImage`. The application imposes no restriction on rebuilding or relinking that runtime with a modified libfuse. Upstream build environments were not completely pinned, so this is not a promise of reproducible runtime bytes. The extracted portable app runs without an AppImage runtime or FUSE.

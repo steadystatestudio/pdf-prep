@@ -1,0 +1,191 @@
+name: Repository checks
+
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-checks:
+    name: Repository checks
+    if: github.event_name != 'push' || github.event.deleted != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch complete branch, tag and event history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          show-progress: false
+          submodules: false
+          lfs: false
+      - name: Validate Git metadata
+        shell: bash
+        run: |
+          python3 -I - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          OID = re.compile(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})\Z")
+          LOGIN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:\[bot\])?\Z", re.I)
+
+
+          class GuardError(Exception):
+              pass
+
+
+          def is_noreply_email(email):
+              # GitHub web-flow uses noreply@github.com. User/bot identities use
+              # login@users.noreply.github.com or ID+login@users.noreply.github.com.
+              if email.lower() == b"noreply@github.com":
+                  return True
+              try:
+                  local, domain = email.decode("ascii").rsplit("@", 1)
+              except (UnicodeError, ValueError):
+                  return False
+              if domain.lower() != "users.noreply.github.com":
+                  return False
+              if "+" in local:
+                  identifier, local = local.split("+", 1)
+                  if not re.fullmatch(r"[1-9][0-9]*", identifier):
+                      return False
+              login = local[:-5] if local.lower().endswith("[bot]") else local
+              return bool(1 <= len(login) <= 39 and LOGIN.fullmatch(local))
+
+
+          def git(*args, cwd=None, data=None, required=True):
+              environment = dict(os.environ, GIT_NO_REPLACE_OBJECTS="1")
+              result = subprocess.run(
+                  ["git", "-c", "log.showSignature=false", *args],
+                  cwd=cwd, input=data, capture_output=True, env=environment,
+              )
+              if required and result.returncode:
+                  # Keep diagnostics free of raw commit metadata.
+                  raise GuardError("Cannot read the complete required Git history.")
+              return result
+
+
+          def history_roots(event, event_name, event_sha, cwd=None):
+              if git("rev-parse", "--is-shallow-repository", cwd=cwd).stdout.strip() != b"false":
+                  raise GuardError("A full-history checkout is required; shallow history is not accepted.")
+              refs = git(
+                  "for-each-ref", "--format=%(objectname)", "refs/heads/",
+                  "refs/remotes/origin/", "refs/tags/", cwd=cwd,
+              ).stdout.decode("ascii").splitlines()
+              roots = {git("rev-parse", "--verify", "HEAD^{commit}", cwd=cwd).stdout.decode("ascii").strip()}
+              for ref_oid in refs:
+                  if not OID.fullmatch(ref_oid):
+                      raise GuardError("A fetched ref has an invalid object identifier.")
+                  peeled = git("rev-parse", "--verify", ref_oid + "^{}", cwd=cwd).stdout.decode("ascii").strip()
+                  kind = git("cat-file", "-t", peeled, cwd=cwd).stdout.strip()
+                  if kind == b"commit":
+                      roots.add(peeled)
+                  elif kind not in {b"blob", b"tree"}:
+                      raise GuardError("A fetched ref cannot be fully inspected.")
+                  # Blob/tree tags do not contain commits or commit identities.
+              required = [event_sha]
+              if event_name == "pull_request":
+                  pull = event.get("pull_request", {})
+                  required.extend([pull.get("head", {}).get("sha"), pull.get("base", {}).get("sha")])
+              if event_name == "push" and not event.get("deleted"):
+                  required.append(event.get("after"))
+              if event_name == "merge_group":
+                  required.append(event.get("merge_group", {}).get("head_sha"))
+              for value in required:
+                  if not isinstance(value, str) or not OID.fullmatch(value) or set(value) == {"0"}:
+                      raise GuardError("The event is missing a valid commit identifier.")
+                  peeled = git("rev-parse", "--verify", value + "^{commit}", cwd=cwd)
+                  roots.add(peeled.stdout.decode("ascii").strip())
+              # Inspect the current refs and event commits. Traverse every merge parent.
+              return sorted(roots)
+
+
+          def scan_history(roots, cwd=None):
+              raw = git(
+                  "log", "-z", "--no-mailmap", "--no-show-signature",
+                  "--format=%H%x00%ae%x00%ce", "--stdin", cwd=cwd,
+                  data=("\n".join(roots) + "\n").encode("ascii"),
+              ).stdout
+              fields = raw.split(b"\0")
+              if fields[-1] == b"":
+                  fields.pop()
+              if len(fields) % 3:
+                  raise GuardError("Git returned an incomplete metadata record.")
+              violations = []
+              for index in range(0, len(fields), 3):
+                  sha, author, committer = fields[index:index + 3]
+                  try:
+                      sha = sha.decode("ascii")
+                  except UnicodeError as exc:
+                      raise GuardError("Git returned an invalid commit identifier.") from exc
+                  if not OID.fullmatch(sha):
+                      raise GuardError("Git returned an invalid commit identifier.")
+                  roles = [role for role, email in (("author", author), ("committer", committer))
+                           if not is_noreply_email(email)]
+                  if roles:
+                      violations.append((sha, roles))
+              if not fields:
+                  raise GuardError("No commits were checked.")
+              return len(fields) // 3, violations
+
+
+          def scan_taggers(cwd=None):
+              pending = git("for-each-ref", "--format=%(objectname)", "refs/tags/", cwd=cwd).stdout.decode("ascii").splitlines()
+              seen, violations = set(), []
+              while pending:
+                  sha = pending.pop()
+                  if sha in seen:
+                      continue
+                  if not OID.fullmatch(sha):
+                      raise GuardError("A tag has an invalid object identifier.")
+                  if git("cat-file", "-t", sha, cwd=cwd).stdout.strip() != b"tag":
+                      continue
+                  seen.add(sha)
+                  headers = git("cat-file", "-p", sha, cwd=cwd).stdout.split(b"\n\n", 1)[0].splitlines()
+                  objects = [line[7:].decode("ascii") for line in headers if line.startswith(b"object ")]
+                  identities = [line for line in headers if line.startswith(b"tagger ")]
+                  if len(objects) != 1 or not OID.fullmatch(objects[0]) or len(identities) != 1:
+                      raise GuardError("An annotated tag has missing or malformed metadata headers.")
+                  match = re.fullmatch(rb"tagger .* <([^<>\r\n]*)> [+-]?[0-9]+ [+-][0-9]{4}", identities[0])
+                  if not match or not is_noreply_email(match[1]):
+                      violations.append((sha, ["tagger"]))
+                  pending.append(objects[0])
+              return len(seen), violations
+
+
+          def main():
+              try:
+                  with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as source:
+                      event = json.load(source)
+                  roots = history_roots(event, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_SHA"])
+                  count, violations = scan_history(roots)
+                  tag_count, tag_violations = scan_taggers()
+                  violations.extend(tag_violations)
+              except (GuardError, OSError, ValueError, KeyError) as exc:
+                  # Only our fixed messages reach logs; event data and identities do not.
+                  message = str(exc) if isinstance(exc, GuardError) else "Unable to validate commit history."
+                  print("::error title=Repository checks::" + message)
+                  return 1
+              for sha, roles in violations[:20]:
+                  print("::error title=Repository checks::Git object " + sha +
+                        " has a non-GitHub-noreply " + " and ".join(roles) + " email.")
+              print(f"Checked {count} reachable commits and {tag_count} annotated tags; "
+                    f"{len(violations)} objects have disallowed identities.")
+              if violations:
+                  print("Use the GitHub noreply address from account Email settings for authors, committers and taggers.")
+                  print("Configure the required repository Git settings before committing.")
+              return int(bool(violations))
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PY

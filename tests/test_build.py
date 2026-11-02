@@ -1,0 +1,92 @@
+"""Packaging safeguards and real AppImage launcher argument preservation."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+spec = importlib.util.spec_from_file_location("pdf_prep_build", SCRIPTS / "build.py")
+build = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(build)
+
+
+def test_output_confines_real_resolved_paths(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    assert build.confined_output(project, project / "build/result") == project / "build/result"
+    for invalid in (project, project / ".." / "elsewhere"):
+        with pytest.raises(RuntimeError, match="escaped"):
+            build.confined_output(project, invalid)
+
+
+def test_python_notice_follows_build_interpreter(tmp_path, monkeypatch):
+    interpreter = tmp_path / "interpreter"
+    stdlib = tmp_path / "stdlib"
+    interpreter.mkdir()
+    stdlib.mkdir()
+    monkeypatch.setattr(sys, "base_prefix", str(interpreter))
+    monkeypatch.setattr(build.sysconfig, "get_path", lambda name: str(stdlib))
+    with pytest.raises(RuntimeError, match="missing"):
+        build.python_license()
+    fallback = stdlib / "LICENSE.txt"
+    fallback.write_text("build-interpreter-license", encoding="utf-8")
+    assert build.python_license() == fallback
+    preferred = interpreter / "LICENSE.txt"
+    preferred.write_text("preferred-build-interpreter-license", encoding="utf-8")
+    assert build.python_license() == preferred
+
+
+def test_native_build_rejects_wrong_qt_modules(tmp_path):
+    native = tmp_path / "_internal/PySide6"
+    native.mkdir(parents=True)
+    (native / "Qt6Core.dll").write_bytes(b"needed")
+    (native / "pdfium.dll").write_bytes(b"needed-independent-renderer")
+    build.verify_qt_subset(tmp_path)
+    forbidden = native / "libQt6Pdf.so.6"
+    forbidden.write_bytes(b"unreviewed")
+    with pytest.raises(RuntimeError, match="optional Qt"):
+        build.verify_qt_subset(tmp_path)
+
+
+def test_build_revision_rejects_partial_or_invalid_override(tmp_path, monkeypatch):
+    for value in ("main", "123abc", "uncommitted", "x" * 40):
+        monkeypatch.setenv("BUILD_SOURCE_COMMIT", value)
+        with pytest.raises(RuntimeError, match="full Git commit"):
+            build.source_revision(tmp_path)
+    monkeypatch.setenv("BUILD_SOURCE_COMMIT", "a" * 40)
+    assert build.source_revision(tmp_path) == "a" * 40
+
+
+def test_appimage_rejects_changed_build_tools_before_execution(tmp_path, monkeypatch):
+    tools = tmp_path / "build/tools"
+    tools.mkdir(parents=True)
+    (tools / "appimagetool").write_bytes(b"not-the-pinned-executable")
+    monkeypatch.delenv("APPIMAGETOOL", raising=False)
+    monkeypatch.delenv("APPIMAGE_RUNTIME", raising=False)
+    with pytest.raises(RuntimeError, match="unverified AppImage"):
+        build.package_appimage(tmp_path, tmp_path / "dist/PDF-Prep")
+    assert not (tmp_path / "build/PDF-Prep.AppDir").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="AppImage launcher is a POSIX executable")
+def test_appimage_launcher_keeps_paths_and_arguments_literal(tmp_path):
+    # Launch the real AppRun from a directory containing spaces; shell syntax
+    # in a filename must remain literal data, not executable substitutions.
+    appdir = tmp_path / "application folder with spaces"
+    executable = appdir / "usr/lib/pdf-prep/PDF-Prep"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("#!/usr/bin/env python3\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
+    executable.chmod(0o755)
+    launcher = appdir / "AppRun"
+    source = Path(__file__).resolve().parents[1] / "packaging/linux/AppRun"
+    launcher.write_bytes(source.read_bytes())
+    launcher.chmod(0o755)
+    arguments = ["a page.pdf", "$(touch must-not-exist).pdf", "--self-test", "a report.json"]
+    result = subprocess.run([str(launcher), *arguments], cwd=tmp_path,
+                            capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout) == arguments
+    assert not (tmp_path / "must-not-exist").exists()

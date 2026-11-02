@@ -1,0 +1,217 @@
+name: Release preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Application release tag
+        required: true
+        default: v1.0.1
+        type: string
+      expected_commit:
+        description: Full 40-character source commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PYTHONUTF8: '1'
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+  QT_QPA_PLATFORM: offscreen
+  RELEASE_TAG: ${{ inputs.tag }}
+  BUILD_SOURCE_COMMIT: ${{ inputs.expected_commit }}
+
+jobs:
+  prepare:
+    if: (github.repository == 'steadystatestudio/pdf-prep' || github.repository == 'steadystatestudio/pdf-prep-builds') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      tree: ${{ steps.source.outputs.tree }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Validate release source and version
+        id: source
+        run: python scripts/release_validation.py source --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT"
+
+  build:
+    needs: prepare
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            platform: Windows
+          - os: ubuntu-22.04
+            platform: Linux
+    runs-on: ${{ matrix.os }}
+    env:
+      BUILD_SOURCE_TREE: ${{ needs.prepare.outputs.tree }}
+      RELEASE_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth fonts-dejavu-core \
+            libegl1 libopengl0 libgl1 libdbus-1-3 libfontconfig1 libfreetype6 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 poppler-utils
+      - name: Install pinned application and build dependencies
+        run: |
+          python -m pip install -r requirements-build.txt
+          python -m pip install pytest==9.1.1
+          python -m pip install --no-deps --no-build-isolation -e .
+          python -m pip check
+      - name: Test exact release source
+        run: python -m pytest -q --junitxml=artifacts/source-tests.xml
+      - name: Fetch pinned AppImage inputs
+        if: runner.os == 'Linux'
+        run: python scripts/fetch_appimagetool.py
+      - name: Build packages and record provenance
+        run: python scripts/build.py
+      - name: Check Windows package
+        if: runner.os == 'Windows'
+        run: dist/PDF-Prep/PDF-Prep.exe --self-test "$PWD/artifacts/windows.json"
+      - name: Check Ubuntu 22.04 portable package and AppImage
+        if: runner.os == 'Linux'
+        run: |
+          QT_QPA_PLATFORM=xcb xvfb-run -a dist/PDF-Prep/PDF-Prep --self-test "$PWD/artifacts/ubuntu22-portable.json"
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=xcb xvfb-run -a dist/PDF-Prep-x86_64.AppImage --self-test "$PWD/artifacts/ubuntu22-appimage.json"
+      - name: Verify and stage native package evidence
+        run: python scripts/release_validation.py stage --platform "$RELEASE_PLATFORM" --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT" --tree "$BUILD_SOURCE_TREE"
+      - name: Retain packages and exact-byte receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PDF-Prep-${{ matrix.platform }}
+          path: dist/release-stage/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  sources:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      BUILD_SOURCE_TREE: ${{ needs.prepare.outputs.tree }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Fetch all five checksum-pinned matching sources
+        run: python scripts/fetch_release_sources.py
+      - name: Record verified source assets
+        run: python scripts/release_validation.py stage --platform Sources --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT" --tree "$BUILD_SOURCE_TREE"
+      - name: Retain matching source archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PDF-Prep-Sources
+          path: dist/release-stage/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  compatibility:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BUILD_SOURCE_TREE: ${{ needs.prepare.outputs.tree }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y xvfb xauth fonts-dejavu-core \
+            libegl1 libopengl0 libgl1 libdbus-1-3 libfontconfig1 libfreetype6 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 poppler-utils
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: PDF-Prep-Linux
+          path: candidate
+      - name: Verify retained Ubuntu 22.04 bytes and provenance
+        run: python scripts/release_validation.py verify-linux --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT" --tree "$BUILD_SOURCE_TREE"
+      - name: Check exact same packages on Ubuntu 24.04
+        run: |
+          python scripts/linux_dependencies.py candidate/PDF-Prep/LINUX-SYSTEM-DEPENDENCIES.json
+          chmod +x candidate/PDF-Prep/PDF-Prep candidate/PDF-Prep-x86_64.AppImage
+          QT_QPA_PLATFORM=xcb xvfb-run -a candidate/PDF-Prep/PDF-Prep --self-test "$PWD/artifacts/ubuntu24-portable.json"
+          APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=xcb xvfb-run -a candidate/PDF-Prep-x86_64.AppImage --self-test "$PWD/artifacts/ubuntu24-appimage.json"
+      - name: Record compatibility evidence
+        run: python scripts/release_validation.py stage --platform Ubuntu24 --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT" --tree "$BUILD_SOURCE_TREE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PDF-Prep-Ubuntu24
+          path: dist/release-stage/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  receipt:
+    needs: [prepare, build, sources, compatibility]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BUILD_SOURCE_TREE: ${{ needs.prepare.outputs.tree }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: PDF-Prep-*
+          merge-multiple: true
+          path: ready
+      - name: Require complete package, compatibility and matching-source evidence
+        run: python scripts/release_validation.py finalize --tag "$RELEASE_TAG" --commit "$BUILD_SOURCE_COMMIT" --tree "$BUILD_SOURCE_TREE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: PDF-Prep-Release-Ready
+          path: ready/RELEASE-READY.json
+          if-no-files-found: error
+          retention-days: 7

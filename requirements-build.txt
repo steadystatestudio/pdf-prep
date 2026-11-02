@@ -1,0 +1,6 @@
+PySide6==6.11.2
+shiboken6==6.11.2
+pypdf==6.19.0
+Pillow==12.3.0
+pypdfium2==5.14.0
+PyInstaller==6.22.3

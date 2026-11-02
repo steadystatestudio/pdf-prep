@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep user arguments and paths containing spaces intact.
+HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec "$HERE/usr/lib/pdf-prep/PDF-Prep" "$@"

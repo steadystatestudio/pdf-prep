@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Prep
+Comment=Combine and prepare local PDFs and photos for upload
+Exec=PDF-Prep %F
+Icon=pdf-prep
+Categories=Office;Graphics;
+MimeType=application/pdf;image/jpeg;image/png;
+Terminal=false
+StartupNotify=true
