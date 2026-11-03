@@ -19,7 +19,7 @@ Windows packages target x64. Linux x86_64 packages are built on Ubuntu 22.04; th
 
 ## Linux download
 
-The [version 1.0.3 release](https://github.com/steadystatestudio/pdf-prep/releases/tag/v1.0.3) provides `PDF-Prep-x86_64.AppImage` and `PDF-Prep-linux-x86_64.tar.gz`. Compare the download with `SHA256SUMS-Linux.txt`. Python is bundled in both formats. A graphical desktop and the ordinary Qt/X11 or Wayland runtime libraries are required; see the package's `README-LINUX.txt` and `LINUX-SYSTEM-DEPENDENCIES.json` for the recorded prerequisites. The release receipt identifies the exact source for both platform builds.
+The [version 1.0.4 release](https://github.com/steadystatestudio/pdf-prep/releases/tag/v1.0.4) provides `PDF-Prep-x86_64.AppImage` and `PDF-Prep-linux-x86_64.tar.gz`. Compare the download with `SHA256SUMS-Linux.txt`. Python is bundled in both formats. A graphical desktop and the ordinary Qt/X11 or Wayland runtime libraries are required; see the package's `README-LINUX.txt` and `LINUX-SYSTEM-DEPENDENCIES.json` for the recorded prerequisites. The release receipt identifies the exact source for both platform builds.
 
 For AppImage, make the file executable and run it. Where FUSE is unavailable, run `APPIMAGE_EXTRACT_AND_RUN=1 ./PDF-Prep-x86_64.AppImage`. For the portable archive, extract it and run `PDF-Prep/PDF-Prep`, keeping `_internal` beside the executable. Saving uses a no-replace hard link on Linux. Choose a local destination filesystem that supports hard links; unsupported destinations fail without overwriting files.
 

@@ -6,7 +6,7 @@ on:
       tag:
         description: Application release tag
         required: true
-        default: v1.0.3
+        default: v1.0.4
         type: string
       expected_commit:
         description: Full 40-character source commit

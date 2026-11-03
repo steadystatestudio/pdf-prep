@@ -1,5 +1,11 @@
 # Changes
 
+## 1.0.4 — 2026-11-03
+
+- Restore a useful minimum window size so the preview, everyday controls, task actions and status remain visible together.
+- Measure the layout at the system font size; adapt the minimum to the current monitor and use scrolling when its work area is genuinely too small.
+- Repair undersized restored windows while keeping the system-font improvements.
+
 ## 1.0.3
 
 - Match the operating system UI font family and configured text size, including Linux Mint Cinnamon and Ubuntu GNOME desktop settings. Reopen the app after changing desktop font settings.

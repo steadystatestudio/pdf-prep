@@ -183,11 +183,14 @@ def main(report: Path) -> int:
             def screenshot(name):
                 app.processEvents()
                 path = artifacts / name
-                assert window.grab().save(str(path))
+                capture = window.grab()
+                assert capture.save(str(path))
                 data = path.read_bytes()
                 evidence.append({"path": path.relative_to(report.parent).as_posix(),
                                  "sha256": hashlib.sha256(data).hexdigest(),
-                                 "size_bytes": len(data)})
+                                 "size_bytes": len(data),
+                                 "pixel_size": [capture.width(), capture.height()],
+                                 "minimum_window": [window.minimumWidth(), window.minimumHeight()]})
 
             phase = "desktop import, prepared preview and exact-byte saving"
             assert not window.save_button.isEnabled()
@@ -202,9 +205,9 @@ def main(report: Path) -> int:
             screenshot('desktop-light.png')
             window.set_theme('dark')
             screenshot('desktop-dark.png')
-            window.resize(640, 600)
+            window.resize(1, 1)
             app.processEvents()
-            assert (window.width(), window.height()) == (640, 600)
+            assert window.size() == window.minimumSize()
             screenshot('narrow-dark.png')
             for button in (window.add_button, window.prepare_button, window.save_button, window.cancel_button):
                 point = button.mapTo(window, button.rect().topLeft())

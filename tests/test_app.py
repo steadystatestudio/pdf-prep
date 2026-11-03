@@ -300,7 +300,7 @@ def test_delete_shortcut_cannot_remove_pages_from_size_field_and_narrow_actions_
 
 
 @pytest.mark.parametrize("points", [11, 16, 20])
-def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, points):
+def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, points, monkeypatch):
     from PySide6.QtGui import QFont
     original = QFont(app.font())
     font = QFont(original)
@@ -308,6 +308,7 @@ def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, 
     app.setFont(font)
     try:
         window = MainWindow(QSettings(str(tmp_path / "font.ini"), QSettings.Format.IniFormat))
+        _use_test_screen(window, monkeypatch, 800, 600)
         window.show()
         window.resize(800, 600)
         QTest.qWait(100)
@@ -328,3 +329,14 @@ def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, 
     finally:
         app.setFont(original)
         apply_theme(app, "system")
+
+
+def _use_test_screen(window, monkeypatch, width, height):
+    """Model a monitor work area, rather than requesting an undersized window."""
+    from types import SimpleNamespace
+    from PySide6.QtCore import QRect
+    screen = window.screen()
+    replacement = SimpleNamespace(availableGeometry=lambda: QRect(0, 0, width, height),
+                                  availableGeometryChanged=screen.availableGeometryChanged)
+    monkeypatch.setattr(window, "screen", lambda: replacement)
+    window.window_size_guard.update()

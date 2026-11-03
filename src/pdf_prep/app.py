@@ -165,6 +165,8 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.resize(1160, 820)
         self._build_ui()
+        from .window_size import WindowSizeGuard
+        self.window_size_guard = WindowSizeGuard(self, (980, 720), self.work_scroll)
         self._shortcuts()
         QApplication.instance().styleHints().colorSchemeChanged.connect(self._system_theme_changed)
         self._update_controls()

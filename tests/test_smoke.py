@@ -22,11 +22,11 @@ def test_package_smoke_retains_only_synthetic_relative_evidence(tmp_path):
         path = tmp_path / item['path']
         assert hashlib.sha256(path.read_bytes()).hexdigest() == item['sha256']
         assert path.stat().st_size == item['size_bytes']
-    for name, size in [('desktop-light.png', (1160, 820)),
-                       ('desktop-dark.png', (1160, 820)),
-                       ('narrow-dark.png', (640, 600))]:
+    for name in ('desktop-light.png', 'desktop-dark.png', 'narrow-dark.png'):
         with Image.open(tmp_path / files[name]['path']) as image:
-            assert image.size == size
+            assert list(image.size) == files[name]['pixel_size']
+            assert image.width >= files[name]['minimum_window'][0]
+            assert image.height >= files[name]['minimum_window'][1]
     assert len(PdfReader(tmp_path / files['prepared-output.pdf']['path']).pages) == 3
     edited = PdfReader(tmp_path / files['extracted-rotated-output.pdf']['path'])
     assert [page.rotation for page in edited.pages] == [90, 90]

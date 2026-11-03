@@ -28,13 +28,13 @@ def test_reviewed_source_requires_exact_commit_and_both_studio_identities(monkey
             return identity + "\n" + identity
         return "b" * 40
     monkeypatch.setattr(release, "git", git)
-    assert release.validate_source("v1.0.3", sha) == "b" * 40
-    for tag, commit in (("v1.0.0", sha), ("v1.0.3", "main"), ("v1.0.3", "c" * 40)):
+    assert release.validate_source("v1.0.4", sha) == "b" * 40
+    for tag, commit in (("v1.0.0", sha), ("v1.0.4", "main"), ("v1.0.4", "c" * 40)):
         with pytest.raises(ValueError):
             release.validate_source(tag, commit)
     monkeypatch.setattr(release, "git", lambda *args: "Other <user@example.invalid>\n" + identity if args[0] == "show" else git(*args))
     with pytest.raises(ValueError, match="author or committer"):
-        release.validate_source("v1.0.3", sha)
+        release.validate_source("v1.0.4", sha)
 
 
 def test_package_provenance_checks_both_source_ids_and_all_bindings():
