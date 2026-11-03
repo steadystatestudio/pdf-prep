@@ -57,7 +57,8 @@ def validate_source(tag, commit):
 
 
 def check_info(info, commit, tree, platform):
-    if (info.get("product") != "PDF Prep" or info.get("version") != "1.0.3"
+    version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    if (info.get("product") != "PDF Prep" or info.get("version") != version
             or info.get("source_commit") != commit or info.get("source_tree") != tree
             or info.get("platform") != platform
             or any(info.get("dependencies", {}).get(name) != source_index()["qt_version"]

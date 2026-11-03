@@ -1,6 +1,6 @@
 # Changes
 
-## 1.0.4 — 2026-11-03
+## 1.0.5 — 2026-11-03
 
 - Restore a useful minimum window size so the preview, everyday controls, task actions and status remain visible together.
 - Measure the layout at the system font size; adapt the minimum to the current monitor and use scrolling when its work area is genuinely too small.
