@@ -297,3 +297,34 @@ def test_delete_shortcut_cannot_remove_pages_from_size_field_and_narrow_actions_
         assert top_left.x() >= 0 and top_left.y() >= 0
         assert top_left.x() + button.width() <= window.width()
         assert top_left.y() + button.height() <= window.height()
+
+
+@pytest.mark.parametrize("points", [11, 16, 20])
+def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, points):
+    from PySide6.QtGui import QFont
+    original = QFont(app.font())
+    font = QFont(original)
+    font.setPointSizeF(points)
+    app.setFont(font)
+    try:
+        window = MainWindow(QSettings(str(tmp_path / "font.ini"), QSettings.Format.IniFormat))
+        window.show()
+        window.resize(800, 600)
+        QTest.qWait(100)
+        for choice in ("light", "dark", "system"):
+            window.set_theme(choice)
+            app.processEvents()
+            assert app.font() == font
+        assert window.width() <= 800 and window.height() <= 600
+        for button in (window.add_button, window.prepare_button, window.save_button, window.cancel_button):
+            assert button.font().pointSizeF() == points
+            assert button.height() >= button.fontMetrics().height()
+            assert window.rect().contains(button.mapTo(window, button.rect().bottomRight()))
+        window.work_scroll.ensureWidgetVisible(window.mode_combo)
+        app.processEvents()
+        view = window.work_scroll.viewport()
+        assert view.rect().contains(window.mode_combo.mapTo(view, window.mode_combo.rect().center()))
+        window.close()
+    finally:
+        app.setFont(original)
+        apply_theme(app, "system")

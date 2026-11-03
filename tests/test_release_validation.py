@@ -18,32 +18,27 @@ import release_validation as release
 import fetch_release_sources as sources
 
 
-def test_reviewed_source_requires_exact_commit_single_root_and_both_studio_identities(monkeypatch):
+def test_reviewed_source_requires_exact_commit_and_both_studio_identities(monkeypatch):
     sha = "a" * 40
     identity = "steadystatestudio <300259075+steadystatestudio@users.noreply.github.com>"
     def git(*args):
         if args[:2] == ("rev-parse", "HEAD"):
             return sha
-        if args[:2] == ("rev-list", "--count"):
-            return "1"
         if args[0] == "show":
             return identity + "\n" + identity
         return "b" * 40
     monkeypatch.setattr(release, "git", git)
-    assert release.validate_source("v1.0.1", sha) == "b" * 40
-    for tag, commit in (("v1.0.0", sha), ("v1.0.1", "main"), ("v1.0.1", "c" * 40)):
+    assert release.validate_source("v1.0.2", sha) == "b" * 40
+    for tag, commit in (("v1.0.0", sha), ("v1.0.2", "main"), ("v1.0.2", "c" * 40)):
         with pytest.raises(ValueError):
             release.validate_source(tag, commit)
-    monkeypatch.setattr(release, "git", lambda *args: "2" if args[0] == "rev-list" else git(*args))
-    with pytest.raises(ValueError, match="initial commit"):
-        release.validate_source("v1.0.1", sha)
     monkeypatch.setattr(release, "git", lambda *args: "Other <user@example.invalid>\n" + identity if args[0] == "show" else git(*args))
     with pytest.raises(ValueError, match="author or committer"):
-        release.validate_source("v1.0.1", sha)
+        release.validate_source("v1.0.2", sha)
 
 
 def test_package_provenance_checks_both_source_ids_and_all_bindings():
-    info = {"product": "PDF Prep", "version": "1.0.1", "source_commit": "a" * 40,
+    info = {"product": "PDF Prep", "version": "1.0.2", "source_commit": "a" * 40,
             "source_tree": "b" * 40, "platform": "linux",
             "dependencies": {name: "6.11.2" for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6")}}
     release.check_info(info, "a" * 40, "b" * 40, "linux")

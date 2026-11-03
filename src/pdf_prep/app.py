@@ -10,7 +10,7 @@ from typing import Callable
 
 from PIL import Image
 from PySide6.QtCore import Qt, QItemSelectionModel, QSettings, QSize, QThread, Signal, QUrl, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QFont, QIcon, QImage, QKeySequence, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import engine
 from .styles import FileDialogStyle, refresh_file_dialog_icons
+from .system_fonts import apply_system_font
+from .flow_layout import FlowLayout
 
 
 def image_pixmap(image: Image.Image) -> QPixmap:
@@ -56,9 +58,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
     app.setProperty("dark", dark)
-    font = QFont("Segoe UI" if os.name == "nt" else "DejaVu Sans")
-    font.setPointSizeF(10.5)
-    app.setFont(font)
+    apply_system_font(app)
     app.setStyleSheet(f"""
         QWidget {{ color: {text}; }}
         QMainWindow, QDialog {{ background: {window}; }}
@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
-        toolbar = QHBoxLayout()
+        toolbar = FlowLayout()
         self.add_button = self._button("Add Files", "addFiles", self.add_files, "Add PDFs, JPEGs and PNGs (Ctrl+O)")
         self.clear_button = self._button("Clear", "clearPages", self.clear_pages)
         toolbar.addWidget(self.add_button)
@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(settings_button)
         root.addLayout(toolbar)
 
+        work = QWidget()
+        work_layout = QVBoxLayout(work)
+        work_layout.setContentsMargins(0, 0, 0, 0)
         panel = QFrame()
         panel.setObjectName("settingsPanel")
         settings_grid = QGridLayout(panel)
@@ -244,7 +247,7 @@ class MainWindow(QMainWindow):
         self.mode_note.setObjectName("muted")
         self.mode_note.setWordWrap(True)
         settings_grid.addWidget(self.mode_note, 1, 0, 1, 4)
-        root.addWidget(panel)
+        work_layout.addWidget(panel)
         self.mode_combo.currentIndexChanged.connect(self.settings_changed)
         self.limit_spin.valueChanged.connect(self.settings_changed)
 
@@ -318,22 +321,25 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.output_info)
         splitter.addWidget(right)
         splitter.setSizes([330, 780])
-        root.addWidget(splitter, 1)
+        work_layout.addWidget(splitter, 1)
+        self.work_scroll = QScrollArea()
+        self.work_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.work_scroll.setWidgetResizable(True)
+        self.work_scroll.setMinimumHeight(120)
+        self.work_scroll.setWidget(work)
+        root.addWidget(self.work_scroll, 1)
 
-        actions = QGridLayout()
-        actions.setColumnStretch(0, 1)
-        actions.setColumnStretch(2, 1)
+        actions = FlowLayout()
         self.prepare_button = self._button("Prepare preview", "preparePreview", self.prepare_output, "Build and inspect the actual output before saving (Ctrl+P)")
         self.save_button = self._button("Save PDF", "savePdf", self.save_dialog, "Save the inspected PDF as a new file (Ctrl+S)")
         self.cancel_button = self._button("Cancel", "cancelWork", self.cancel_work, "Stop safely; no output file is written")
         self.open_folder_button = self._button("Open folder", "openFolder", self.open_folder)
-        actions.addWidget(self.prepare_button, 0, 0, Qt.AlignmentFlag.AlignLeft)
-        actions.addWidget(self.save_button, 0, 1)
-        result_actions = QHBoxLayout()
-        result_actions.addStretch()
-        result_actions.addWidget(self.cancel_button)
-        result_actions.addWidget(self.open_folder_button)
-        actions.addLayout(result_actions, 0, 2)
+        actions.addWidget(self.prepare_button)
+        actions.addStretch()
+        actions.addWidget(self.save_button)
+        actions.addStretch()
+        actions.addWidget(self.cancel_button)
+        actions.addWidget(self.open_folder_button)
         root.addLayout(actions)
         self.status_label = QLabel("Add PDF files or photos, arrange the pages, then prepare a preview.")
         self.status_label.setObjectName("status")

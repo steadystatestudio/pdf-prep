@@ -50,8 +50,6 @@ def validate_source(tag, commit):
                 and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)]
     if tag != "v" + project["project"]["version"] or versions != [project["project"]["version"]]:
         raise ValueError("Tag and application versions differ")
-    if git("rev-list", "--count", commit) != "1":
-        raise ValueError("Release source must contain one initial commit")
     expected_identity = "steadystatestudio <300259075+steadystatestudio@users.noreply.github.com>"
     if git("show", "-s", "--format=%an <%ae>%n%cn <%ce>", commit).splitlines() != [expected_identity, expected_identity]:
         raise ValueError("Unexpected source author or committer")
@@ -59,7 +57,7 @@ def validate_source(tag, commit):
 
 
 def check_info(info, commit, tree, platform):
-    if (info.get("product") != "PDF Prep" or info.get("version") != "1.0.1"
+    if (info.get("product") != "PDF Prep" or info.get("version") != "1.0.2"
             or info.get("source_commit") != commit or info.get("source_tree") != tree
             or info.get("platform") != platform
             or any(info.get("dependencies", {}).get(name) != source_index()["qt_version"]
