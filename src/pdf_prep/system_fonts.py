@@ -102,3 +102,12 @@ def apply_system_font(app: QApplication) -> None:
         # Qt's responsibility and must not be cancelled here.
         scale, dpi = 1.0, 96.0
     app.setFont(desktop_font(app.font(), description, scale, dpi))
+
+
+def system_font_css(app: QApplication) -> str:
+    """Keep Qt stylesheets from resetting tables/dialogs to a native small font."""
+    font = app.font()
+    family = font.family().replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"')
+    size = (f"{font.pointSizeF():g}pt" if font.pointSizeF() > 0
+            else f"{font.pixelSize()}px" if font.pixelSize() > 0 else None)
+    return f'font-family: "{family}"; font-size: {size};' if size else ""

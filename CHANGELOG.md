@@ -1,6 +1,6 @@
 # Changes
 
-## 1.0.2
+## 1.0.3
 
 - Match the operating system UI font family and configured text size, including Linux Mint Cinnamon and Ubuntu GNOME desktop settings. Reopen the app after changing desktop font settings.
 - Keep controls readable at larger text sizes: toolbar and task actions wrap, while configuration and page previews scroll when needed.

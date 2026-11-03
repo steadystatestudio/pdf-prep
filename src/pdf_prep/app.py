@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import engine
 from .styles import FileDialogStyle, refresh_file_dialog_icons
-from .system_fonts import apply_system_font
+from .system_fonts import apply_system_font, system_font_css
 from .flow_layout import FlowLayout
 
 
@@ -60,7 +60,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
     app.setProperty("dark", dark)
     apply_system_font(app)
     app.setStyleSheet(f"""
-        QWidget {{ color: {text}; }}
+        QWidget {{ {system_font_css(app)} color: {text}; }}
         QMainWindow, QDialog {{ background: {window}; }}
         QPushButton, QToolButton {{ background: {panel}; border: 1px solid {border}; border-radius: 6px; padding: 8px 12px; min-height: 20px; }}
         QPushButton:hover, QToolButton:hover {{ background: {field}; border-color: #508fdb; }}

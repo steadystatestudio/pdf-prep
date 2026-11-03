@@ -53,3 +53,26 @@ def test_x11_text_scaling_is_not_applied_twice(monkeypatch, platform, dpr, point
     assert app.setFont.call_args.args[0].pointSizeF() == points
     system_fonts.apply_system_font(app)
     assert app.setFont.call_count == 1
+
+
+def test_stylesheet_baseline_includes_native_tables_and_new_dialogs():
+    from PySide6.QtWidgets import QApplication, QDialog, QTableWidget
+    app = QApplication.instance() or QApplication([])
+    previous_font, previous_style = QFont(app.font()), app.styleSheet()
+    try:
+        chosen = QFont("Sans Serif", 18)
+        app.setFont(chosen)
+        app.setStyleSheet("QWidget {" + system_fonts.system_font_css(app) + "color: #222;}"
+                         "QHeaderView::section { padding: 9px; }")
+        dialog = QDialog()
+        table = QTableWidget(2, 2, dialog)
+        dialog.ensurePolished()
+        table.ensurePolished()
+        app.processEvents()
+        for widget in (dialog, table, table.horizontalHeader(), table.verticalHeader()):
+            assert widget.font().pointSizeF() == 18
+            assert widget.font().family() == chosen.family()
+        dialog.close()
+    finally:
+        app.setStyleSheet(previous_style)
+        app.setFont(previous_font)

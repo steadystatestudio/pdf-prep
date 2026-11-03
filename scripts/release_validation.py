@@ -57,7 +57,7 @@ def validate_source(tag, commit):
 
 
 def check_info(info, commit, tree, platform):
-    if (info.get("product") != "PDF Prep" or info.get("version") != "1.0.2"
+    if (info.get("product") != "PDF Prep" or info.get("version") != "1.0.3"
             or info.get("source_commit") != commit or info.get("source_tree") != tree
             or info.get("platform") != platform
             or any(info.get("dependencies", {}).get(name) != source_index()["qt_version"]
