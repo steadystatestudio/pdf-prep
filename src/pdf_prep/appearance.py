@@ -310,7 +310,8 @@ def _fallback(app):
 
 def _resolve(app):
     settings = getattr(app, "_studio_pilot_settings", None)
-    providers = [("app-override", _overrides(settings, app._studio_native_font, getattr(app, "_studio_appearance_theme_key", "theme")))]
+    theme_key = getattr(app, "_studio_appearance_theme_key", "theme")
+    providers = [("app-override", _overrides(settings, app._studio_native_font, theme_key))]
     if sys.platform.startswith("linux"):
         cache = app._studio_pilot_providers
         providers += [(name, cache.get(name, {"reason": "pending"}))

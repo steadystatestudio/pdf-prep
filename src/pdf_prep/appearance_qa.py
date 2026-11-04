@@ -1,8 +1,8 @@
 """Explicit package diagnostics; invoked only by the existing smoke checks."""
 
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .appearance import appearance_details, appearance_probes_pending, configure_appearance
 from .system_fonts import polish_system_text
 
 
@@ -26,7 +27,25 @@ def capture_appearance(app, window, destination):
     """Measure native text inheritance and the real compact layout in the bundle."""
     destination = Path(destination) / "appearance"
     destination.mkdir(parents=True, exist_ok=False)
+    probe_deadline = time.monotonic() + 5
+    while appearance_probes_pending(app) and time.monotonic() < probe_deadline:
+        app.processEvents()
+        time.sleep(.005)
+    assert not appearance_probes_pending(app), "Desktop appearance probes did not settle"
+    rendered_font = json.loads(appearance_details(app))["actual_font"]
+    rendered_available = rendered_font["pixel_size"] > 0
+    if app.platformName() not in {"offscreen", "minimal"}:
+        assert rendered_available, "Native platform did not resolve a rendered UI font"
     font, size = QFont(app.font()), window.size()
+    original_native = app.property("studioAppearanceDiagnostics")
+    settings = app._studio_pilot_settings
+
+    def reapply_theme():
+        callback = getattr(app, "_studio_refresh_appearance", None)
+        if callback:
+            callback()
+    override_keys = ("appearance/font_mode", "appearance/font_family", "appearance/font_size_pt")
+    original_overrides = {key: settings.value(key) for key in override_keys if settings.contains(key)}
     surfaces = (
         QAbstractButton,
         QAbstractItemView,
@@ -51,8 +70,13 @@ def capture_appearance(app, window, destination):
             enlarged = QFont(font)
             if points > 0:
                 enlarged.setPointSizeF(points)
-            app.setFont(enlarged)
+            settings.setValue("appearance/font_mode", "custom")
+            settings.setValue("appearance/font_family", enlarged.family())
+            settings.setValue("appearance/font_size_pt", enlarged.pointSizeF())
+            configure_appearance(app, settings)
+            reapply_theme()
             settle()
+            assert abs(app.font().pointSizeF() - points) < .01, "Requested QA font was not applied"
             polish_system_text(app)
             widgets = []
             for widget in window.findChildren(QWidget):
@@ -139,14 +163,122 @@ def capture_appearance(app, window, destination):
                 QTimer.singleShot(150, inspect_help)
                 help_action()
                 assert not help_errors, help_errors
+        exercise_production_settings(app, window, destination)
     finally:
-        app.setFont(font)
+        for key in override_keys:
+            if key in original_overrides:
+                settings.setValue(key, original_overrides[key])
+            else:
+                settings.remove(key)
+        configure_appearance(app, settings)
+        reapply_theme()
         window.resize(size)
         settle()
     (destination / "report.json").write_text(
         json.dumps(
-            dict(passed=True, native=app.property("studioAppearanceDiagnostics"), cases=records, text_surfaces=widgets),
+            dict(passed=True, native=original_native, cases=records, text_surfaces=widgets,
+                 rendered_font=rendered_font, rendered_font_available=rendered_available,
+                 font_verification_scope="rendered metrics" if rendered_available
+                 else "requested inheritance only; offscreen font integration unavailable"),
             indent=2,
         ),
         encoding="utf-8",
+    )
+
+
+def exercise_production_settings(app, window, destination):
+    """Exercise shipped controls against the isolated smoke-test preferences."""
+    from PySide6.QtGui import QColor
+
+    from .appearance import configure_appearance
+    from .appearance_controls import AppearanceSettingsDialog
+
+    settings = app._studio_pilot_settings
+    theme_key = getattr(app, "_studio_appearance_theme_key", "theme")
+    def keys():
+        return [key for key in settings.allKeys() if key == theme_key or key.startswith("appearance/")]
+    original = {key: settings.value(key) for key in keys()}
+    unrelated = {key: settings.value(key) for key in settings.allKeys() if key not in original}
+    callback = getattr(app, "_studio_refresh_appearance", None)
+    dialogs = []
+    checks = []
+
+    def settle():
+        deadline = time.monotonic() + .2
+        while time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(.005)
+
+    def open_dialog():
+        dialog = AppearanceSettingsDialog(settings, window, theme_key, callback)
+        dialogs.append(dialog)
+        dialog.show()
+        settle()
+        assert dialog.minimumSize() == dialog.maximumSize()
+        assert not any("copy appearance" in b.text().lower() for b in dialog.findChildren(QAbstractButton))
+        for widget in dialog.findChildren(QWidget):
+            if isinstance(widget, (QAbstractButton, QComboBox, QLabel, QLineEdit, QSpinBox)):
+                assert widget.fontInfo().pixelSize() == window.fontInfo().pixelSize(), type(widget).__name__
+        return dialog
+
+    try:
+        dialog = open_dialog()
+        assert dialog.grab().save(str(destination / "settings-system.png"))
+        controls = dialog.controls
+        controls.font_mode.setCurrentIndex(1)
+        controls.font_family.setCurrentFont(QFont(app.font().family()))
+        controls.font_size.setValue(18)
+        controls.accent_mode.setCurrentIndex(1)
+        controls.accent_color = QColor("#d34f91")
+        controls.theme.setCurrentIndex(controls.theme.findData("dark"))
+        dialog.accept()
+        settle()
+        assert abs(app.font().pointSizeF() - 18) < .01
+        assert app._studio_appearance_values["accent"] == "#d34f91"
+        assert app._studio_appearance_values["color_scheme"] == "dark"
+        assert window.grab().save(str(destination / "custom-font-accent.png"))
+        checks.append("Saved custom font and accent apply to the packaged interface")
+
+        dialog = open_dialog()
+        dialog.controls.theme.setCurrentIndex(dialog.controls.theme.findData("light"))
+        dialog.accept()
+        settle()
+        assert abs(app.font().pointSizeF() - 18) < .01
+        assert app._studio_appearance_values["accent"] == "#d34f91"
+        assert app._studio_appearance_values["color_scheme"] == "light"
+        checks.append("Theme changes retain custom font and accent")
+
+        dialog = open_dialog()
+        dialog.controls.font_size.setValue(23)
+        dialog.controls.refresh_appearance_button.click()
+        settle()
+        assert dialog.controls.font_size.value() == 23
+        assert settings.value("appearance/font_size_pt", type=float) == 18
+        dialog.reject()
+        assert settings.value("appearance/font_size_pt", type=float) == 18
+        checks.append("Refresh retains staged choices and Cancel preserves saved preferences")
+
+        dialog = open_dialog()
+        dialog.controls.reset_appearance_button.click()
+        assert settings.value("appearance/font_mode") == "custom"
+        dialog.accept()
+        settle()
+        assert settings.value("appearance/font_mode") == "system"
+        assert settings.value(theme_key) == "system"
+        assert {key: settings.value(key) for key in unrelated} == unrelated
+        checks.append("Appearance-only Reset preserves unrelated preferences")
+    finally:
+        for dialog in dialogs:
+            dialog.close()
+        for key in keys():
+            settings.remove(key)
+        for key, value in original.items():
+            settings.setValue(key, value)
+        settings.sync()
+        configure_appearance(app, settings, theme_key=theme_key)
+        if callback:
+            callback()
+        settle()
+    (destination / "settings.json").write_text(
+        json.dumps({"passed": True, "checks": checks}, indent=2), encoding="utf-8"
     )

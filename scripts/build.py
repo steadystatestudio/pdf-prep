@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 
-from build_appearance_probe import build as build_appearance_probe, stage_probe
 import platform
 import re
 import shutil
@@ -18,6 +17,7 @@ import sysconfig
 import tomllib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from build_appearance_probe import build as build_appearance_probe, stage_probe
 import fetch_appimagetool as appimage_inputs
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -96,3 +96,15 @@ def test_custom_size_boundaries_are_supported(controls):
         widget.font_size.setValue(points)
         widget.save_settings()
         assert settings.value("appearance/font_size_pt", type=float) == points
+
+
+def test_pending_fit_is_cancelled_when_dialog_is_deleted(controls):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from shiboken6 import isValid
+
+    app, settings, _ = controls
+    dialog = AppearanceSettingsDialog(settings, theme_key="ui/appearance")
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert not isValid(dialog)
+    app.processEvents()

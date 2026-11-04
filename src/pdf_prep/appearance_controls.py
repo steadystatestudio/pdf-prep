@@ -2,12 +2,24 @@
 from __future__ import annotations
 
 import math
+
 from PySide6.QtCore import QEvent, QRect, Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QApplication, QColorDialog, QComboBox, QDialog, QDialogButtonBox,
-    QDoubleSpinBox, QFontComboBox, QFormLayout, QFrame, QLabel, QPushButton,
-    QScrollArea, QVBoxLayout, QWidget,
+    QApplication,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFontComboBox,
+    QFormLayout,
+    QFrame,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
 )
 
 
@@ -173,7 +185,10 @@ class AppearanceSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self.scroll)
         layout.addWidget(self.buttons)
-        QTimer.singleShot(0, self.fit_to_screen)
+        self.fit_timer = QTimer(self)
+        self.fit_timer.setSingleShot(True)
+        self.fit_timer.timeout.connect(self.fit_to_screen)
+        self.fit_timer.start(0)
 
     def fit_to_screen(self):
         screen = self.screen()
@@ -201,8 +216,8 @@ class AppearanceSettingsDialog(QDialog):
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() in {QEvent.FontChange, QEvent.ApplicationFontChange, QEvent.StyleChange}:
-            if hasattr(self, "buttons"):
-                QTimer.singleShot(0, self.fit_to_screen)
+            if hasattr(self, "fit_timer"):
+                self.fit_timer.start(0)
 
     def accept(self):
         from .appearance import configure_appearance
