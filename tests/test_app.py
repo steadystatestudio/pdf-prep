@@ -44,10 +44,32 @@ def _rendered_icon_images(app, button):
     painted = button.grab().toImage()
     button.setIcon(QIcon())
     app.processEvents()
+    assert button.icon().isNull(), "Appearance refreshed during the empty-icon comparison"
     empty = button.grab().toImage()
     button.setIcon(icon)
     app.processEvents()
     return painted, empty
+
+
+def _settle_icon_appearance(app, timeout=5):
+    """An in-flight native response must not restore our empty baseline icon."""
+    from pdf_prep.appearance import appearance_probes_pending
+
+    deadline = time.monotonic() + timeout
+    previous = stable_since = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        watcher = getattr(app, "_studio_appearance_watcher", None)
+        timers = [getattr(watcher, name, None) for name in ("refresh_timer", "host_timer")]
+        pending = appearance_probes_pending(app) or any(timer and timer.isActive() for timer in timers)
+        signature = (app.font().toString(), app.palette().cacheKey())
+        now = time.monotonic()
+        if pending or signature != previous:
+            previous, stable_since = signature, now
+        elif now - stable_since >= .1:
+            return
+        QTest.qWait(5)
+    raise AssertionError("Appearance providers did not settle before icon painting comparison")
 
 
 def _readable_icon_pixels(app, button):
@@ -89,6 +111,7 @@ def test_file_dialog_navigation_icons_are_painted(app, tmp_path, theme, focused)
         for current in (theme, "dark" if theme == "light" else "light"):
             apply_theme(app, current)
             app.processEvents()
+            _settle_icon_appearance(app)
             for name in ("backButton", "forwardButton", "toParentButton", "newFolderButton",
                          "listModeButton", "detailModeButton"):
                 button = dialog.findChild(QToolButton, name)

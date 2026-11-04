@@ -3,8 +3,41 @@ import importlib
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QRect
+import pytest
+from PySide6.QtCore import QCoreApplication, QEvent, QRect, QSettings
 from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QVBoxLayout, QWidget
+
+
+@pytest.fixture(autouse=True)
+def isolated_appearance_state(monkeypatch, tmp_path):
+    """Unrelated queued appearance callbacks cannot change a guard's test font."""
+    app = QApplication.instance() or QApplication([])
+    project = Path(__file__).resolve().parents[1]
+    package = next((project / "src").glob("*/window_size.py")).parent.name
+    appearance = importlib.import_module(package + ".appearance")
+    old_font, old_style = app.font(), app.styleSheet()
+    old_settings = getattr(app, "_studio_pilot_settings", None)
+    old_key = getattr(app, "_studio_appearance_theme_key", "theme")
+    monkeypatch.setattr(app, "_studio_refresh_appearance", None, raising=False)
+    for provider, function in [("gtk", "_start_native"), ("portal", "_start_portal")]:
+        monkeypatch.setattr(appearance, function,
+                            lambda instance, generation, name=provider: appearance._provider_finished(
+                                instance, generation, name, {"reason": "fixture-unavailable"}))
+    settings = QSettings(str(tmp_path / "appearance.ini"), QSettings.IniFormat)
+    settings.setValue("appearance/font_mode", "custom")
+    settings.setValue("appearance/font_family", old_font.family())
+    points = old_font.pointSizeF()
+    settings.setValue("appearance/font_size_pt", points if 6 <= points <= 72 else 9)
+    appearance.configure_appearance(app, settings, refresh=True)
+    app.setStyleSheet("")
+    app.processEvents()
+    try:
+        yield
+    finally:
+        appearance.configure_appearance(app, old_settings, refresh=True, theme_key=old_key)
+        app.setFont(old_font)
+        app.setStyleSheet(old_style)
+        app.processEvents()
 
 
 def guard_module():

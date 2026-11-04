@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
 SOURCE = next((Path(__file__).parents[1] / "src").glob("*/qa_file_dialog.py")).parent
 HELPER = importlib.import_module(SOURCE.name + ".qa_file_dialog")
 QA = importlib.import_module(SOURCE.name + ".appearance_qa")
+APPEARANCE = importlib.import_module(SOURCE.name + ".appearance")
+FONTS = importlib.import_module(SOURCE.name + ".system_fonts")
 
 
 @pytest.fixture(scope="module")
@@ -101,6 +103,10 @@ def test_real_picker_font_cancel_and_native_history_restoration(app, tmp_path):
     old_font = app.font()
     old_style = app.styleSheet()
     old_tooltip = QToolTip.font()
+    old_settings = getattr(app, "_studio_pilot_settings", None)
+    old_key = getattr(app, "_studio_appearance_theme_key", "theme")
+    resolved = getattr(app, "_studio_appearance_resolved_font", None)
+    old_resolved_font = QFont(resolved) if resolved is not None else None
     window = QWidget()
     history = QSettings(QSettings.NativeFormat, QSettings.UserScope, "QtProject")
     history.setFallbacksEnabled(False)
@@ -109,11 +115,13 @@ def test_real_picker_font_cancel_and_native_history_restoration(app, tmp_path):
     try:
         if not QFontDatabase.families():
             QFontDatabase.addApplicationFont("C:/Windows/Fonts/segoeui.ttf")
-        font = QFont(app.font())
-        font.setPointSizeF(18)
-        app.setFont(font)
-        QToolTip.setFont(font)
-        app.setStyleSheet("QWidget { font-size:18pt; }")
+        settings = QSettings(str(tmp_path / "appearance.ini"), QSettings.IniFormat)
+        settings.setValue("appearance/font_mode", "custom")
+        settings.setValue("appearance/font_family", app.font().family())
+        settings.setValue("appearance/font_size_pt", 18)
+        APPEARANCE.configure_appearance(app, settings, theme_key="theme")
+        app.setStyleSheet("QWidget { " + FONTS.system_font_css(app) + " }")
+        assert app.font().pointSizeF() == 18
         window.show()
         destination = tmp_path / "appearance"
         root = destination / "file-dialog-synthetic"
@@ -141,12 +149,16 @@ def test_real_picker_font_cancel_and_native_history_restoration(app, tmp_path):
             and report["synthetic_files_unchanged"]
             and len(report["text_surfaces"]) >= 8
         )
+        assert app.font().pointSizeF() == 18
         if group(history) != before or native_store_snapshot(history) != actual_store_before:
             pytest.fail("Native QtProject picker preferences changed")
         assert (root / "sentinel.txt").read_bytes() == b"unchanged synthetic input"
     finally:
         window.close()
         window.deleteLater()
+        APPEARANCE.configure_appearance(app, old_settings, theme_key=old_key)
+        if old_resolved_font is not None:
+            app._studio_appearance_resolved_font = old_resolved_font
         app.setFont(old_font)
         app.setStyleSheet(old_style)
         QToolTip.setFont(old_tooltip)

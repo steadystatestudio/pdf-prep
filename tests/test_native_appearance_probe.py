@@ -102,7 +102,8 @@ def test_actual_window_css_controls_scheme_without_theme_name_inference(
         'void *provider = new_provider();\n'
         f'const char *css = "window {{ background-color: {background}; color: {foreground}; }}";\n'
         'if (!load_css(provider, css, -1, NULL)) return 2;\n'
-        'add_provider(screen(), provider, 900); return appearance_probe_main(); }\n',
+        'add_provider(screen(), provider, 900); char *probe_argv[] = {"appearance-probe", NULL};\n'
+        'return appearance_probe_main(1, probe_argv); }\n',
         encoding="utf-8",
     )
     executable = tmp_path / "window-css"
