@@ -70,6 +70,7 @@ def test_app_html_keeps_heading_and_small_text_at_system_size():
 )
 def test_windows_host_query_failure_retains_a_diagnostic(monkeypatch, failure):
     monkeypatch.setattr(appearance.sys, "platform", "win32")
+    monkeypatch.setattr(appearance.subprocess, "CREATE_NO_WINDOW", 0, raising=False)
 
     def fail(*args, **kwargs):
         raise failure
