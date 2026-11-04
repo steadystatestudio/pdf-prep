@@ -22,6 +22,65 @@ from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 from . import engine
 
 
+def _minimum_geometry_facts(window):
+    guard = getattr(window, 'window_size_guard', None)
+    timer = getattr(guard, 'timer', None)
+    preferred = getattr(guard, 'preferredMinimum', None)
+    screen = window.screen()
+    return {
+        'size': list(window.size().toTuple()),
+        'minimum': list(window.minimumSize().toTuple()),
+        'frame': list(window.frameGeometry().getRect()),
+        'available': list(screen.availableGeometry().getRect()) if screen else None,
+        'window_state': str(window.windowState()),
+        'maximized': window.isMaximized(),
+        'device_pixel_ratio': window.devicePixelRatioF(),
+        'guard_preferred_minimum': list(preferred.toTuple()) if preferred is not None else None,
+        'guard_timer_active': bool(timer and timer.isActive()),
+        'busy': bool(getattr(window, 'busy', False)),
+    }
+
+
+def _settle_minimum_geometry(app, window, timeout=5, stable_interval=0.1):
+    """Await a real minimum resize, independently of background-worker idleness.
+
+    Native configure replies and restored appearance can change the minimum
+    after a resize request. Reissue only after that minimum changes and settles;
+    a compositor refusing the exact settled minimum remains a check failure.
+    """
+    deadline = time.monotonic() + timeout
+    observed = requested = None
+    minimum_since = equal_since = None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        now = time.monotonic()
+        minimum = window.minimumSize().toTuple()
+        guard = getattr(window, 'window_size_guard', None)
+        timer = getattr(guard, 'timer', None)
+        pending = bool(timer and timer.isActive())
+        if minimum != observed:
+            observed, requested = minimum, None
+            minimum_since, equal_since = now, None
+        if pending:
+            minimum_since, equal_since = now, None
+        elif now - minimum_since >= stable_interval:
+            if requested != minimum:
+                window.resize(1, 1)
+                requested, equal_since = minimum, None
+            elif window.size() == window.minimumSize() and not getattr(window, 'busy', False):
+                if equal_since is None:
+                    equal_since = now
+                elif now - equal_since >= stable_interval:
+                    assert window.size() == window.minimumSize(), _minimum_geometry_facts(window)
+                    return _minimum_geometry_facts(window)
+            else:
+                equal_since = None
+        # Let native configure events and Python-backed workers run between pumps.
+        time.sleep(0.005)
+    raise AssertionError('Exact minimum geometry did not settle: '
+                         + json.dumps(_minimum_geometry_facts(window), sort_keys=True))
+
+
 def main(report: Path) -> int:
     report = report.absolute()
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -209,11 +268,10 @@ def main(report: Path) -> int:
             screenshot('desktop-dark.png')
             from .appearance_qa import capture_appearance
             capture_appearance(app, window, artifacts)
-            window.resize(1, 1)
             idle()
-            window.resize(1, 1)
-            idle()
-            assert window.size() == window.minimumSize()
+            minimum_geometry = _settle_minimum_geometry(app, window)
+            assert window.size() == window.minimumSize(), _minimum_geometry_facts(window)
+            retain('narrow-geometry.json', json.dumps(minimum_geometry, indent=2).encode('utf-8'))
             screenshot('narrow-dark.png')
             for button in (window.add_button, window.prepare_button, window.save_button, window.cancel_button):
                 point = button.mapTo(window, button.rect().topLeft())
