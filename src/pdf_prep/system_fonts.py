@@ -206,6 +206,26 @@ def contrast_text(background) -> str:
     return max(("#000000", "#ffffff"), key=lambda color: contrast_ratio(background, color))
 
 
+
+def _save_diagnostics(app, diagnostics):
+    if app.property("studioAppearanceDiagnostics") != diagnostics:
+        app.setProperty("studioAppearanceDiagnostics", diagnostics)
+        # No filenames, documents, or other user content are recorded here.
+        try:
+            folder = Path(QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation))
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "appearance.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
+        except OSError:
+            pass  # Diagnostics must never prevent the application opening.
+
+
+def update_workarea_diagnostics(app, details):
+    """Record bounded layout values without changing the font, palette or style."""
+    current = app.property("studioAppearanceDiagnostics")
+    if isinstance(current, dict) and current.get("work_area") != details:
+        _save_diagnostics(app, dict(current, work_area=dict(details)))
+
+
 def accent_colors(app: QApplication) -> dict[str, str]:
     values = dict(capture_system_appearance(app))
     accent = QColor(values.get("accent") or "")
@@ -242,20 +262,16 @@ def accent_colors(app: QApplication) -> dict[str, str]:
     diagnostic_font.setWeight(current_font.weight())
     diagnostic_font.setItalic(current_font.italic())
     diagnostics = dict(values, **result, effective_font=diagnostic_font.toString(), platform=app.platformName())
+    # The owned window guard publishes geometry independently of repaint/theme.
+    previous = app.property("studioAppearanceDiagnostics")
+    if isinstance(previous, dict) and isinstance(previous.get("window_geometry"), dict):
+        diagnostics["window_geometry"] = dict(previous["window_geometry"])
     if getattr(app, "_studio_pilot_configured", False):
         from .appearance import appearance_details
         details = json.loads(appearance_details(app))
         diagnostics.update(properties=details["properties"], actual_font=details["actual_font"],
-                           scaling=details["scaling"], candidate=details["version"])
-    if app.property("studioAppearanceDiagnostics") != diagnostics:
-        app.setProperty("studioAppearanceDiagnostics", diagnostics)
-        # No filenames, documents, or other user content are recorded here.
-        try:
-            folder = Path(QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation))
-            folder.mkdir(parents=True, exist_ok=True)
-            (folder / "appearance.json").write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
-        except OSError:
-            pass  # Diagnostics must never prevent the application opening.
+                           scaling=details["scaling"], work_area=details["work_area"], candidate=details["version"])
+    _save_diagnostics(app, diagnostics)
     return result
 
 

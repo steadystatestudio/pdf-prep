@@ -34,6 +34,7 @@ def build() -> Path | None:
         "host_python_required": False,
         "host_pygobject_required": False,
         "optional_runtime_provider": "GTK 3 loaded dynamically in this isolated process",
+        "optional_workarea_provider": "X11/EWMH with optional XRandR, loaded dynamically in a separate invocation",
     }, indent=2) + "\n", encoding="utf-8")
     return output
 

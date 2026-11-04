@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QPoint, QRect, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -14,29 +14,169 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QProgressBar,
     QSpinBox,
     QTextEdit,
     QWidget,
 )
 
-from .appearance import appearance_details, appearance_probes_pending, configure_appearance
+from .appearance import (
+    appearance_details,
+    appearance_probes_pending,
+    configure_appearance,
+)
+from .desktop_geometry import available_geometry, workarea_probes_pending
+from .qa_file_dialog import inspect_file_dialog
 from .system_fonts import polish_system_text
+
+
+def _geometry_mode(window):
+    guard = getattr(window, "window_size_guard", None)
+    constrained = bool(guard is not None and getattr(guard, "constrained_native_maximum", False))
+    details = dict(getattr(guard, "geometry_constraint", {})) if guard is not None else {}
+    if constrained:
+        assert details.get("source") == "x11-ewmh", "Unverified constrained window mode"
+    return ("constrained-native-max" if constrained else "normal"), details
+
+
+def _settle_geometry(app, window, *, normal=True, timeout=5):
+    """Wait for strict geometry invariants and native configure acknowledgements."""
+    deadline = time.monotonic() + timeout
+    previous, stable, requested_state = None, 0, None
+    while time.monotonic() < deadline:
+        app.processEvents()
+        raw = window.screen().availableGeometry()
+        area = available_geometry(window, raw)
+        mode, _ = _geometry_mode(window)
+        desired_state = "max" if mode == "constrained-native-max" else "normal" if normal else None
+        if desired_state != requested_state:
+            if desired_state == "max" and not window.isMaximized():
+                window.showMaximized()
+            elif desired_state == "normal" and window.isMaximized():
+                window.showNormal()
+            requested_state = desired_state
+        frame = window.frameGeometry()
+        row = getattr(window, "action_row", None)
+        signature = (
+            window.size().toTuple(),
+            window.minimumSize().toTuple(),
+            frame.getRect(),
+            area.getRect(),
+            window.fontInfo().pixelSize(),
+            window.isMaximized(),
+            mode,
+            None if row is None else (row.height(), row.minimumSizeHint().toTuple()),
+        )
+        timers = [getattr(window, name, None) for name in ("layout_timer", "fit_timer")]
+        timers.append(getattr(getattr(window, "window_size_guard", None), "timer", None))
+        if row is not None:
+            timers.append(getattr(row, "metrics_timer", None))
+        valid = (
+            not appearance_probes_pending(app)
+            and not workarea_probes_pending(app)
+            and (window.isMaximized() if mode == "constrained-native-max" else not normal or not window.isMaximized())
+            and window.width() >= window.minimumWidth()
+            and window.height() >= window.minimumHeight()
+            and frame.width() <= area.width() + 2
+            and frame.height() <= area.height() + 2
+            and not any(timer and timer.isActive() for timer in timers)
+            and (row is None or row.height() == row.height_for_width(row.width()))
+        )
+        stable = stable + 1 if valid and signature == previous else 0
+        if stable >= 6:
+            return
+        previous = signature
+        time.sleep(0.02)
+    raise AssertionError(
+        (
+            "geometry-did-not-settle",
+            signature,
+            {"font_probe": appearance_probes_pending(app), "workarea_probe": workarea_probes_pending(app)},
+        )
+    )
+
+
+def _persistent_workspace(window, area):
+    """Check visible actions/status and an actual work viewport without reading text."""
+    workspace = getattr(window, "work_scroll", None) or getattr(window, "splitter", None)
+    assert isinstance(workspace, QWidget), "Missing working surface"
+    persistent = []
+    seen = set()
+    names = (
+        "rename",
+        "undo",
+        "process_btn",
+        "save_photo_btn",
+        "export_button",
+        "prepare_button",
+        "save_button",
+        "extract_button",
+        "cancel_button",
+        "open_button",
+        "new_button",
+        "open_folder_button",
+        "progress",
+        "progress_bar",
+        "status",
+        "status_label",
+        "add_files",
+        "add_folder",
+        "clear",
+        "add_btn",
+        "add_folder_btn",
+        "clear_btn",
+        "help_btn",
+        "help_button",
+        "settings_btn",
+        "settings_button",
+        "donate_btn",
+        "donate_button",
+    )
+    for name in names:
+        widget = getattr(window, name, None)
+        if not isinstance(widget, QWidget) or not widget.isVisible() or id(widget) in seen:
+            continue
+        # Scrollable configuration controls are clipped by their viewport; task
+        # actions outside that content must remain visible at every work-area size.
+        if workspace.isAncestorOf(widget):
+            continue
+        seen.add(id(widget))
+        rect = QRect(widget.mapTo(window, QPoint(0, 0)), widget.size())
+        assert window.rect().contains(rect), ("persistent-control-outside-client", name, rect.getRect())
+        persistent.append((name, widget, rect))
+    assert any(isinstance(widget, QAbstractButton) for _, widget, _ in persistent), "Missing persistent task action"
+    assert any(isinstance(widget, (QLabel, QProgressBar)) for _, widget, _ in persistent), "Missing persistent status"
+    for index, (name, widget, rect) in enumerate(persistent):
+        for other_name, other, other_rect in persistent[index + 1 :]:
+            if widget.isAncestorOf(other) or other.isAncestorOf(widget):
+                continue
+            assert not rect.intersects(other_rect), ("persistent-controls-overlap", name, other_name)
+    viewport = workspace.viewport() if hasattr(workspace, "viewport") else workspace
+    rect = QRect(viewport.mapTo(window, QPoint(0, 0)), viewport.size()).intersected(window.rect())
+    reserve = min(max(1, window.fontMetrics().height() * 3), max(1, area.height() // 4))
+    assert rect.width() > 0 and rect.height() >= reserve, ("workspace-reserve-missing", rect.getRect(), reserve)
+    for name, widget, control_rect in persistent:
+        if workspace.isAncestorOf(widget):
+            continue
+        assert not rect.intersects(control_rect), ("workspace-overlaps-persistent-control", name)
+    return {
+        "workspace": rect.getRect(),
+        "minimum_workspace_height": reserve,
+        "persistent_controls": [{"name": name, "rectangle": rect.getRect()} for name, _, rect in persistent],
+    }
 
 
 def capture_appearance(app, window, destination):
     """Measure native text inheritance and the real compact layout in the bundle."""
     destination = Path(destination) / "appearance"
     destination.mkdir(parents=True, exist_ok=False)
-    probe_deadline = time.monotonic() + 5
-    while appearance_probes_pending(app) and time.monotonic() < probe_deadline:
-        app.processEvents()
-        time.sleep(.005)
-    assert not appearance_probes_pending(app), "Desktop appearance probes did not settle"
+    original_state, original_size = window.windowState(), window.size()
+    _settle_geometry(app, window)
     rendered_font = json.loads(appearance_details(app))["actual_font"]
     rendered_available = rendered_font["pixel_size"] > 0
     if app.platformName() not in {"offscreen", "minimal"}:
         assert rendered_available, "Native platform did not resolve a rendered UI font"
-    font, size = QFont(app.font()), window.size()
+    font, size = QFont(app.font()), original_size
     original_native = app.property("studioAppearanceDiagnostics")
     settings = app._studio_pilot_settings
 
@@ -44,6 +184,7 @@ def capture_appearance(app, window, destination):
         callback = getattr(app, "_studio_refresh_appearance", None)
         if callback:
             callback()
+
     override_keys = ("appearance/font_mode", "appearance/font_family", "appearance/font_size_pt")
     original_overrides = {key: settings.value(key) for key in override_keys if settings.contains(key)}
     surfaces = (
@@ -58,12 +199,10 @@ def capture_appearance(app, window, destination):
         QTextEdit,
     )
     records = []
+    file_dialogs = []
 
     def settle():
-        deadline = time.monotonic() + 0.15
-        while time.monotonic() < deadline:
-            app.processEvents()
-            time.sleep(0.005)
+        _settle_geometry(app, window)
 
     try:
         for label, points in (("native", font.pointSizeF()), ("large-layout", max(18, font.pointSizeF()))):
@@ -76,7 +215,7 @@ def capture_appearance(app, window, destination):
             configure_appearance(app, settings)
             reapply_theme()
             settle()
-            assert abs(app.font().pointSizeF() - points) < .01, "Requested QA font was not applied"
+            assert abs(app.font().pointSizeF() - points) < 0.01, "Requested QA font was not applied"
             polish_system_text(app)
             widgets = []
             for widget in window.findChildren(QWidget):
@@ -85,19 +224,37 @@ def capture_appearance(app, window, destination):
                 # Qt stylesheets resolve point sizes into pixels on some platforms.
                 actual, expected = widget.fontInfo().pixelSize(), window.fontInfo().pixelSize()
                 assert actual == expected, (type(widget).__name__, widget.objectName(), actual, expected)
-                widgets.append(dict(type=type(widget).__name__, name=widget.objectName(), pixels=actual))
+                widgets.append({"type": type(widget).__name__, "name": widget.objectName(), "pixels": actual})
             heights = []
             for width in (1280, 960, 820, 1):
-                window.resize(width, min(800, window.screen().availableGeometry().height() - 50))
+                mode, _ = _geometry_mode(window)
+                area = available_geometry(window, window.screen().availableGeometry())
+                if mode == "normal":
+                    window.showNormal()
+                    window.resize(width, min(800, area.height() - 50))
                 settle()
-                area, frame = window.screen().availableGeometry(), window.frameGeometry()
+                mode, constraint = _geometry_mode(window)
+                if width == 1 and mode == "normal" and window.width() != window.minimumWidth():
+                    window.resize(1, window.height())
+                    settle()
+                    mode, constraint = _geometry_mode(window)
+                area = available_geometry(window, window.screen().availableGeometry())
+                frame = window.frameGeometry()
                 assert frame.width() <= area.width() + 2 and frame.height() <= area.height() + 2, (
                     label,
                     frame.getRect(),
                     area.getRect(),
                     window.minimumSize().toTuple(),
                 )
-                assert window.width() >= window.minimumWidth()
+                assert window.width() >= window.minimumWidth(), (
+                    label,
+                    width,
+                    window.size().toTuple(),
+                    window.minimumSize().toTuple(),
+                )
+                if width == 1 and mode == "normal":
+                    assert window.width() == window.minimumWidth(), "Normal minimum-width clamp did not stop resizing"
+                workspace = _persistent_workspace(window, area)
                 if hasattr(window, "action_row") and hasattr(window, "rename"):
                     row = window.action_row
                     controls, primary, undo = row.controls, window.rename, window.undo
@@ -107,16 +264,29 @@ def capture_appearance(app, window, destination):
                         assert primary.y() == undo.y()
                         heights.append(row.height())
                 records.append(
-                    dict(
-                        font_case=label,
-                        requested_width=width,
-                        size=window.size().toTuple(),
-                        minimum=window.minimumSize().toTuple(),
-                        font=window.font().toString(),
-                        text_surfaces=len(widgets),
-                    )
+                    {
+                        "font_case": label,
+                        "requested_width": width,
+                        "size": window.size().toTuple(),
+                        "minimum": window.minimumSize().toTuple(),
+                        "font": window.font().toString(),
+                        "text_surfaces": len(widgets),
+                        "geometry_mode": mode,
+                        "geometry_constraint": constraint,
+                        "raw_qt_available_geometry": window.screen().availableGeometry().getRect(),
+                        "effective_available_geometry": area.getRect(),
+                        "workspace": workspace,
+                    }
                 )
             assert len(set(heights)) <= 1, heights
+            file_dialogs.append(
+                dict(
+                    font_case=label,
+                    **inspect_file_dialog(
+                        app, window, destination, surfaces, lambda dialog: _settle_geometry(app, dialog)
+                    ),
+                )
+            )
             assert window.grab().save(str(destination / (label + "-minimum.png")))
             window.resize(size)
             settle()
@@ -132,7 +302,7 @@ def capture_appearance(app, window, destination):
             if help_action:
                 help_errors = []
 
-                def inspect_help():
+                def inspect_help(label=label, help_errors=help_errors):
                     dialog = app.activeModalWidget()
                     try:
                         assert dialog is not None, "Help did not open"
@@ -154,7 +324,7 @@ def capture_appearance(app, window, destination):
                                     fragment += 1
                                 block = block.next()
                         assert dialog.grab().save(str(destination / (label + "-help.png")))
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - Always close the modal QA dialog.
                         help_errors.append(repr(exc))
                     finally:
                         if dialog:
@@ -174,12 +344,22 @@ def capture_appearance(app, window, destination):
         reapply_theme()
         window.resize(size)
         settle()
+        window.setWindowState(original_state)
+        _settle_geometry(app, window, normal=False)
     (destination / "report.json").write_text(
         json.dumps(
-            dict(passed=True, native=original_native, cases=records, text_surfaces=widgets,
-                 rendered_font=rendered_font, rendered_font_available=rendered_available,
-                 font_verification_scope="rendered metrics" if rendered_available
-                 else "requested inheritance only; offscreen font integration unavailable"),
+            {
+                "passed": True,
+                "native": original_native,
+                "cases": records,
+                "text_surfaces": widgets,
+                "file_dialogs": file_dialogs,
+                "rendered_font": rendered_font,
+                "rendered_font_available": rendered_available,
+                "font_verification_scope": "rendered metrics"
+                if rendered_available
+                else "requested inheritance only; offscreen font integration unavailable",
+            },
             indent=2,
         ),
         encoding="utf-8",
@@ -195,8 +375,10 @@ def exercise_production_settings(app, window, destination):
 
     settings = app._studio_pilot_settings
     theme_key = getattr(app, "_studio_appearance_theme_key", "theme")
+
     def keys():
         return [key for key in settings.allKeys() if key == theme_key or key.startswith("appearance/")]
+
     original = {key: settings.value(key) for key in keys()}
     unrelated = {key: settings.value(key) for key in settings.allKeys() if key not in original}
     callback = getattr(app, "_studio_refresh_appearance", None)
@@ -204,10 +386,10 @@ def exercise_production_settings(app, window, destination):
     checks = []
 
     def settle():
-        deadline = time.monotonic() + .2
-        while time.monotonic() < deadline:
-            app.processEvents()
-            time.sleep(.005)
+        _settle_geometry(app, window)
+        for dialog in dialogs:
+            if dialog.isVisible():
+                _settle_geometry(app, dialog)
 
     def open_dialog():
         dialog = AppearanceSettingsDialog(settings, window, theme_key, callback)
@@ -233,7 +415,7 @@ def exercise_production_settings(app, window, destination):
         controls.theme.setCurrentIndex(controls.theme.findData("dark"))
         dialog.accept()
         settle()
-        assert abs(app.font().pointSizeF() - 18) < .01
+        assert abs(app.font().pointSizeF() - 18) < 0.01
         assert app._studio_appearance_values["accent"] == "#d34f91"
         assert app._studio_appearance_values["color_scheme"] == "dark"
         assert window.grab().save(str(destination / "custom-font-accent.png"))
@@ -243,7 +425,7 @@ def exercise_production_settings(app, window, destination):
         dialog.controls.theme.setCurrentIndex(dialog.controls.theme.findData("light"))
         dialog.accept()
         settle()
-        assert abs(app.font().pointSizeF() - 18) < .01
+        assert abs(app.font().pointSizeF() - 18) < 0.01
         assert app._studio_appearance_values["accent"] == "#d34f91"
         assert app._studio_appearance_values["color_scheme"] == "light"
         checks.append("Theme changes retain custom font and accent")

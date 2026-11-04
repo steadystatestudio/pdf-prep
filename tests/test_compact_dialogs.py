@@ -1,5 +1,4 @@
 """Ordinary text fits; long viewer content scrolls independently of Close."""
-from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QRect
@@ -17,7 +16,7 @@ def test_fitted_text_viewer_keeps_footer_visible(monkeypatch, long_content, area
     app = QApplication.instance() or QApplication([])
     text = "A short, complete explanation." if not long_content else "Complete details remain readable.\n" * 200
     dialog = TextContentDialog("Help", text)
-    monkeypatch.setattr(dialog, "screen", lambda: SimpleNamespace(availableGeometry=lambda: area))
+    monkeypatch.setattr(dialog.screen(), "availableGeometry", lambda: area)
     dialog.show()
     QTest.qWait(50)
     try:

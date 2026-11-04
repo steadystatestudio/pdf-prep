@@ -4,20 +4,20 @@ This entry point is used by release validation, never by ordinary app startup.
 All preferences and inputs are isolated, and retained artifacts contain only
 documents created below. The report names artifacts relative to its directory.
 """
-from io import BytesIO
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import platform
 import tempfile
 import threading
 import time
+from io import BytesIO
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from . import engine
 
@@ -27,6 +27,13 @@ def _minimum_geometry_facts(window):
     timer = getattr(guard, 'timer', None)
     preferred = getattr(guard, 'preferredMinimum', None)
     screen = window.screen()
+    extents = {}
+    for name in ('add_button', 'clear_button', 'settings_button', 'prepare_button',
+                 'save_button', 'cancel_button', 'open_folder_button', 'status_label', 'progress'):
+        widget = getattr(window, name, None)
+        if widget is not None and widget.isVisible():
+            rectangle = widget.rect().translated(widget.mapTo(window, widget.rect().topLeft()))
+            extents[name] = list(rectangle.getRect())
     return {
         'size': list(window.size().toTuple()),
         'minimum': list(window.minimumSize().toTuple()),
@@ -38,6 +45,9 @@ def _minimum_geometry_facts(window):
         'guard_preferred_minimum': list(preferred.toTuple()) if preferred is not None else None,
         'guard_timer_active': bool(timer and timer.isActive()),
         'busy': bool(getattr(window, 'busy', False)),
+        'geometry_constraint': getattr(guard, 'geometry_constraint', None),
+        'constrained_native_maximum': bool(getattr(guard, 'constrained_native_maximum', False)),
+        'persistent_extents': extents,
     }
 
 
@@ -47,17 +57,62 @@ def _settle_minimum_geometry(app, window, timeout=5, stable_interval=0.1):
     Native configure replies and restored appearance can change the minimum
     after a resize request. Reissue only after that minimum changes and settles;
     a compositor refusing the exact settled minimum remains a check failure.
+    A validated work area too small for the normal footprint instead requires
+    stable compositor maximization with every persistent control inside it.
     """
     deadline = time.monotonic() + timeout
     observed = requested = None
     minimum_since = equal_since = None
+    normal_since = constrained_since = None
+    if window.isMaximized() or window.isFullScreen() or window.isMinimized():
+        window.showNormal()
     while time.monotonic() < deadline:
         app.processEvents()
         now = time.monotonic()
-        minimum = window.minimumSize().toTuple()
         guard = getattr(window, 'window_size_guard', None)
         timer = getattr(guard, 'timer', None)
         pending = bool(timer and timer.isActive())
+        from .appearance import appearance_probes_pending
+        pending = pending or appearance_probes_pending(app)
+        constraint = getattr(guard, 'geometry_constraint', {})
+        preferred, capacity = constraint.get('preferred_minimum', []), constraint.get('client_capacity', [])
+        measured_constraint = (len(preferred) == len(capacity) == 2
+                               and any(wanted > limit for wanted, limit in zip(preferred, capacity)))
+        constrained = (getattr(guard, 'constrained_native_maximum', False)
+                       and measured_constraint
+                       and constraint.get('source') == 'x11-ewmh'
+                       and constraint.get('reason') == 'preferred-minimum-exceeds-validated-workarea')
+        if (constrained and window.isMaximized() and not window.isFullScreen() and not window.isMinimized()
+                and not pending and not getattr(window, 'busy', False)):
+            snapshot = _minimum_geometry_facts(window)
+            signature = json.dumps({key: snapshot[key] for key in
+                                    ('size', 'minimum', 'frame', 'persistent_extents', 'geometry_constraint')},
+                                   sort_keys=True)
+            if observed != signature:
+                observed, constrained_since = signature, now
+            elif constrained_since is not None and now - constrained_since >= stable_interval:
+                assert window.width() >= window.minimumWidth() and window.height() >= window.minimumHeight()
+                from PySide6.QtCore import QRect
+                for name, rectangle in snapshot['persistent_extents'].items():
+                    assert window.rect().contains(QRect(*rectangle)), (name, snapshot)
+                facts = _minimum_geometry_facts(window)
+                facts['geometry_mode'] = 'validated-constrained-maximized'
+                return facts
+            time.sleep(0.005)
+            continue
+        constrained_since = None
+        if window.isMaximized() or window.isFullScreen() or window.isMinimized():
+            normal_since = None
+            observed = requested = None
+            minimum_since = equal_since = None
+            time.sleep(0.005)
+            continue
+        if normal_since is None:
+            normal_since = now
+        if now - normal_since < stable_interval:
+            time.sleep(0.005)
+            continue
+        minimum = window.minimumSize().toTuple()
         if minimum != observed:
             observed, requested = minimum, None
             minimum_since, equal_since = now, None
@@ -72,7 +127,9 @@ def _settle_minimum_geometry(app, window, timeout=5, stable_interval=0.1):
                     equal_since = now
                 elif now - equal_since >= stable_interval:
                     assert window.size() == window.minimumSize(), _minimum_geometry_facts(window)
-                    return _minimum_geometry_facts(window)
+                    facts = _minimum_geometry_facts(window)
+                    facts['geometry_mode'] = 'exact-normal-minimum'
+                    return facts
             else:
                 equal_since = None
         # Let native configure events and Python-backed workers run between pumps.
@@ -187,6 +244,7 @@ def main(report: Path) -> int:
             from PySide6.QtCore import QItemSelectionModel, QSettings
             from PySide6.QtGui import QFontDatabase
             from PySide6.QtWidgets import QApplication
+
             from .app import MainWindow
             from .styles import FileDialogStyle
             app = QApplication.instance() or QApplication([])

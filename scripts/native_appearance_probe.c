@@ -149,7 +149,7 @@ static int lookup(void *context, const char *const *names, Rgba *value) {
     return 0;
 }
 
-int main(void) {
+static int appearance_main(void) {
     setlocale(LC_NUMERIC, "C");
     void *gtk = dlopen("libgtk-3.so.0", RTLD_NOW | RTLD_LOCAL);
     if (!gtk) { error("gtk-library-unavailable"); output(NULL, 0, 1, -1, NULL, NULL, NULL); return 0; }
@@ -236,4 +236,149 @@ int main(void) {
     g_free(font_name); g_free(theme_name);
     gtk_widget_destroy(window);
     return 0;
+}
+
+/* SPDX-License-Identifier: MIT
+ * Read-only optional desktop work-area reader. No X11 headers or link dependency.
+ */
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef unsigned long Atom;
+typedef unsigned long Window;
+typedef struct _XDisplay Display;
+#define API(ret, name, args) static ret (*name) args
+API(Display *, XOpenDisplay, (const char *));
+API(int, XCloseDisplay, (Display *));
+API(Window, XDefaultRootWindow, (Display *));
+API(Atom, XInternAtom, (Display *, const char *, int));
+API(int, XGetWindowProperty, (Display *, Window, Atom, long, long, int, Atom,
+                            Atom *, int *, unsigned long *, unsigned long *, unsigned char **));
+API(int, XGetGeometry, (Display *, Window, Window *, int *, int *, unsigned int *, unsigned int *, unsigned int *, unsigned int *));
+API(int, XFree, (void *));
+typedef struct { Atom name; int primary, automatic, noutput, x, y, width, height, mwidth, mheight; unsigned long *outputs; } Monitor;
+API(Monitor *, XRRGetMonitors, (Display *, Window, int, int *));
+API(void, XRRFreeMonitors, (Monitor *));
+
+static void fail(const char *code) {
+    printf("{\"schema\":1,\"workarea\":null,\"errors\":[\"%s\"]}\n", code);
+}
+
+static int property(Display *display, Window root, Atom atom, long limit,
+                    unsigned long **value, unsigned long *count) {
+    Atom type = 0;
+    int format = 0;
+    unsigned long remaining = 0;
+    unsigned char *data = NULL;
+    if (!atom) return 0;
+    int status = XGetWindowProperty(display, root, atom, 0, limit, 0, 6,
+            &type, &format, count, &remaining, &data);
+    if (!status && !type) { if (data) XFree(data); return 0; }
+    if (status || type != 6 || format != 32
+            || remaining || !*count || *count > (unsigned long)limit || !data) {
+        if (data) XFree(data);
+        return -1;
+    }
+    *value = (unsigned long *)data;
+    return 1;
+}
+
+static int workarea_main(void) {
+    void *library = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (!library) { fail("x11-library-unavailable"); return 0; }
+#define LOAD_X11(name) do { void *symbol = dlsym(library, #name); memcpy(&name, &symbol, sizeof(name)); \
+    if (!name) { fail("x11-api-unavailable"); dlclose(library); return 0; } } while (0)
+    LOAD_X11(XOpenDisplay); LOAD_X11(XCloseDisplay); LOAD_X11(XDefaultRootWindow); LOAD_X11(XInternAtom);
+    LOAD_X11(XGetWindowProperty); LOAD_X11(XGetGeometry); LOAD_X11(XFree);
+    Display *display = XOpenDisplay(NULL);
+    if (!display) { fail("x11-display-unavailable"); dlclose(library); return 0; }
+    Window root = XDefaultRootWindow(display), geometry_root;
+    int x, y;
+    unsigned int width, height, border, depth;
+    unsigned long *areas = NULL, *desktops = NULL, count = 0, desktops_count = 0, selected = 0;
+    void *randr = NULL;
+    const char *failure = NULL, *selection = "current-desktop";
+    if (!XGetGeometry(display, root, &geometry_root, &x, &y, &width, &height, &border, &depth)
+            || width < 1 || height < 1 || width > 262144 || height > 262144) {
+        failure = "x11-root-geometry-invalid";
+        goto done;
+    }
+    if (property(display, root, XInternAtom(display, "_NET_WORKAREA", 1), 256, &areas, &count) != 1
+            || count % 4) {
+        failure = "ewmh-workarea-unavailable-or-invalid";
+        goto done;
+    }
+    for (unsigned long i = 0; i < count; i += 4) {
+        if (!areas[i+2] || !areas[i+3] || areas[i] >= width || areas[i+1] >= height
+                || areas[i+2] > width-areas[i] || areas[i+3] > height-areas[i+1]) {
+            failure = "ewmh-workarea-outside-root";
+            goto done;
+        }
+    }
+    int desktop_status = property(display, root, XInternAtom(display, "_NET_CURRENT_DESKTOP", 1), 1,
+                                  &desktops, &desktops_count);
+    if (desktop_status < 0) { failure = "ewmh-current-desktop-invalid"; goto done; }
+    if (desktop_status == 1 && desktops_count == 1) {
+        selected = desktops[0];
+        if (selected >= count / 4) { failure = "ewmh-current-desktop-invalid"; goto done; }
+    } else {
+        selection = "identical-workareas";
+        for (unsigned long i = 4; i < count; i++) {
+            if (areas[i] != areas[i % 4]) { failure = "ewmh-current-desktop-unavailable"; goto done; }
+        }
+    }
+    {
+        unsigned long *area = areas + selected * 4;
+        printf("{\"schema\":1,\"source\":\"x11-ewmh\",\"coordinate_space\":\"x11-root\","
+               "\"root\":[0,0,%u,%u],\"workarea\":[%lu,%lu,%lu,%lu],"
+               "\"desktop_selection\":\"%s\",\"monitors\":",
+               width, height, area[0], area[1], area[2], area[3], selection);
+        randr = dlopen("libXrandr.so.2", RTLD_NOW | RTLD_LOCAL);
+        int number = 0, valid = 0;
+        Monitor *monitors = NULL;
+        if (randr) {
+            void *symbol = dlsym(randr, "XRRGetMonitors"); memcpy(&XRRGetMonitors, &symbol, sizeof(XRRGetMonitors));
+            symbol = dlsym(randr, "XRRFreeMonitors"); memcpy(&XRRFreeMonitors, &symbol, sizeof(XRRFreeMonitors));
+            if (XRRGetMonitors && XRRFreeMonitors) {
+                monitors = XRRGetMonitors(display, root, 1, &number);
+                valid = monitors && number > 0 && number <= 64;
+                for (int i = 0; valid && i < number; i++) {
+                    Monitor m = monitors[i];
+                    valid = m.x >= 0 && m.y >= 0 && m.width > 0 && m.height > 0
+                        && (unsigned int)m.x < width && (unsigned int)m.y < height
+                        && (unsigned int)m.width <= width-(unsigned int)m.x
+                        && (unsigned int)m.height <= height-(unsigned int)m.y;
+                }
+            }
+        }
+        if (!valid) fputs("null", stdout);
+        else {
+            putchar('[');
+            for (int i = 0; i < number; i++) {
+                if (i) putchar(',');
+                printf("[%d,%d,%d,%d]", monitors[i].x, monitors[i].y, monitors[i].width, monitors[i].height);
+            }
+            putchar(']');
+        }
+        if (monitors && XRRFreeMonitors) XRRFreeMonitors(monitors);
+        fputs(",\"errors\":[]}\n", stdout);
+    }
+done:
+    if (failure) fail(failure);
+    if (areas) XFree(areas);
+    if (desktops) XFree(desktops);
+    XCloseDisplay(display);
+    /* XRandR registers per-display Xlib cleanup hooks. Keep its code loaded
+       until XCloseDisplay has finished invoking those hooks. */
+    if (randr) dlclose(randr);
+    dlclose(library);
+    return 0;
+}
+
+
+int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--workarea")) return workarea_main();
+    if (argc != 1) { fail("unsupported-probe-mode"); return 2; }
+    return appearance_main();
 }

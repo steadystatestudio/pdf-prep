@@ -1,5 +1,8 @@
 """Keep a useful desktop workspace visible at the smallest allowed window size."""
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer
+from PySide6.QtGui import QGuiApplication
+
+from .desktop_geometry import available_geometry, workarea_provider
 
 
 class WindowSizeGuard(QObject):
@@ -18,23 +21,39 @@ class WindowSizeGuard(QObject):
         self._screen = None
         self._handle = None
         self._busy = False
+        self._normal_frame_extra = None
+        self.constrained_native_maximum = False
+        self.geometry_constraint = {}
         self._stopped = False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.update)
+        self._geometry_diagnostics_timer = QTimer(self)
+        self._geometry_diagnostics_timer.setSingleShot(True)
+        self._geometry_diagnostics_timer.timeout.connect(self._publish_geometry)
+        self._workarea = workarea_provider(QGuiApplication.instance())
+        self._workarea.changed.connect(self._workarea_changed)
         window.installEventFilter(self)
         self.timer.start(0)
 
     def eventFilter(self, watched, event):
+        if not getattr(self, "_stopped", False) and event.type() in {
+            QEvent.Show, QEvent.Resize, QEvent.WindowStateChange, QEvent.FontChange,
+            QEvent.ApplicationFontChange, QEvent.StyleChange, QEvent.LayoutRequest,
+        }:
+            self._geometry_diagnostics_timer.start(100)
         if self._stopped:
             return False
         if event.type() == QEvent.Hide:
             self.timer.stop()
             return False
         if not self._busy and event.type() in {
-            QEvent.Show, QEvent.Resize, QEvent.FontChange,
+            QEvent.Show, QEvent.Resize, QEvent.WindowActivate,
+            QEvent.WindowStateChange, QEvent.DevicePixelRatioChange, QEvent.FontChange,
             QEvent.ApplicationFontChange, QEvent.StyleChange, QEvent.LayoutRequest,
         }:
+            if event.type() != QEvent.LayoutRequest:
+                self._workarea.refresh()
             self.timer.start(0)
         return False
 
@@ -56,11 +75,15 @@ class WindowSizeGuard(QObject):
                     self._screen.availableGeometryChanged.disconnect(self._screen_changed)
                 screen.availableGeometryChanged.connect(self._screen_changed)
                 self._screen = screen
-            area = available if available is not None else screen.availableGeometry()
+            area = (available if available is not None
+                    else available_geometry(window, screen.availableGeometry()))
             frame = window.frameGeometry()
             extra_w = max(0, frame.width() - window.width())
             extra_h = max(0, frame.height() - window.height())
             cap = QSize(max(1, area.width() - extra_w), max(1, area.height() - extra_h))
+            compositor_fallback = (available is None and self._workarea.enabled
+                                   and self._workarea.last_details.get("source") != "x11-ewmh"
+                                   and (window.isMaximized() or window.isFullScreen()))
             wanted = QSize(self.baseline)
             if hasattr(window, "compact_minimum_width"):
                 wanted.setWidth(max(wanted.width(), window.compact_minimum_width()))
@@ -93,18 +116,64 @@ class WindowSizeGuard(QObject):
                 complete_height = (sum(heights) + max(0, len(heights) - 1) * layout.spacing()
                                    + margins.top() + margins.bottom())
                 wanted.setHeight(max(wanted.height(), complete_height))
+                if complete_height > cap.height():
+                    # A required vertical bar must not manufacture horizontal
+                    # overflow when the monitor can fit the complete form width.
+                    bar_width = self.scroll.verticalScrollBar().sizeHint().width()
+                    required = (work.minimumSizeHint().width() + outer_width
+                                + 2 * self.scroll.frameWidth() + bar_width)
+                    wanted.setWidth(max(wanted.width(), required))
             if self.scroll is not None:
                 # This scroll area is a constrained-screen fallback, not a way
                 # to shrink the everyday layout. Suppressing redundant bars
                 # also avoids width/height-for-width scrollbar feedback loops.
-                fits = wanted.width() <= cap.width() and wanted.height() <= cap.height()
+                fit_limit = window.size() if compositor_fallback else cap
+                fits = wanted.width() <= fit_limit.width() and wanted.height() <= fit_limit.height()
                 policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff if fits else Qt.ScrollBarPolicy.ScrollBarAsNeeded
                 self.scroll.setHorizontalScrollBarPolicy(policy)
                 self.scroll.setVerticalScrollBarPolicy(policy)
             minimum = wanted.boundedTo(cap)
+            if compositor_fallback:
+                # An unverified Qt work area must not stop the compositor from
+                # maximizing. Keep persistent controls and a useful viewport;
+                # the normal collision floor is restored on a state change.
+                persistent = QSize(layout.minimumSize())
+                if self.scroll is not None:
+                    viewport_floor = max(self.scroll.minimumHeight(),
+                                         self.scroll.minimumSizeHint().height())
+                    persistent.setHeight(persistent.height() + max(0, 120 - viewport_floor))
+                minimum = persistent.boundedTo(cap)
             self.preferredMinimum = wanted
+            normal_mode = not (window.isMaximized() or window.isFullScreen() or window.isMinimized())
+            verified_area = (available is None and self._workarea.enabled
+                             and self._workarea.last_details.get("source") == "x11-ewmh")
+            if normal_mode and window.isVisible() and handle is not None and handle.isExposed():
+                self._normal_frame_extra = QSize(extra_w, extra_h)
+            normal_capacity = QSize(cap)
+            basis = "current-normal-frame" if normal_mode else "maximized-frame-upper-bound"
+            if not normal_mode and self._normal_frame_extra is not None:
+                normal_capacity = QSize(max(1, area.width() - self._normal_frame_extra.width()),
+                                        max(1, area.height() - self._normal_frame_extra.height()))
+                basis = "last-normal-frame"
+            self.constrained_native_maximum = bool(verified_area and (
+                wanted.width() > normal_capacity.width() or wanted.height() > normal_capacity.height()))
+            self.geometry_constraint = dict(
+                source=self._workarea.last_details.get("source", "captured-qt"),
+                reason=("preferred-minimum-exceeds-validated-workarea" if self.constrained_native_maximum
+                        else "preferred-minimum-fits-validated-workarea" if verified_area
+                        else self._workarea.last_details.get("reason", "workarea-unverified")),
+                preferred_minimum=list(wanted.toTuple()), client_capacity=list(normal_capacity.toTuple()),
+                capacity_basis=basis, available_geometry=list(area.getRect()),
+            )
             if window.minimumSize() != minimum:
                 window.setMinimumSize(minimum)
+            if self.constrained_native_maximum and normal_mode and window.isVisible():
+                # Wayland does not honor application positioning. When the
+                # complete normal footprint cannot fit a verified work area,
+                # let the compositor place the window and keep actions visible.
+                window.showMaximized()
+                self._workarea.refresh()
+                return
             if not (window.isMaximized() or window.isFullScreen() or window.isMinimized()):
                 size = window.size().expandedTo(minimum).boundedTo(cap)
                 if window.size() != size:
@@ -116,9 +185,54 @@ class WindowSizeGuard(QObject):
                     window.move(position)
         finally:
             self._busy = False
+            if not getattr(self, "_stopped", False):
+                self._geometry_diagnostics_timer.start(100)
+
+    def _publish_geometry(self):
+        if getattr(self, "_stopped", False):
+            return
+        app = QGuiApplication.instance()
+        current = app.property("studioAppearanceDiagnostics")
+        if not isinstance(current, dict):
+            return
+        from .appearance import appearance_probes_pending
+        from .system_fonts import _save_diagnostics
+
+        def vector(value, count):
+            return (list(value) if isinstance(value, (list, tuple)) and len(value) == count
+                    and all(type(item) is int and abs(item) <= 16777215 for item in value) else [])
+
+        constraint = self.geometry_constraint if isinstance(self.geometry_constraint, dict) else {}
+        source = constraint.get("source")
+        reason = constraint.get("reason")
+        basis = constraint.get("capacity_basis")
+        safe_constraint = dict(
+            source=source if isinstance(source, str) and source in {"x11-ewmh", "captured-qt"} else "captured-qt",
+            reason=(reason if isinstance(reason, str) and reason in {"preferred-minimum-exceeds-validated-workarea",
+                                        "preferred-minimum-fits-validated-workarea"} else "workarea-unverified"),
+            preferred_minimum=vector(constraint.get("preferred_minimum"), 2),
+            client_capacity=vector(constraint.get("client_capacity"), 2),
+            capacity_basis=(basis if isinstance(basis, str) and basis in {"current-normal-frame", "last-normal-frame",
+                                              "maximized-frame-upper-bound"} else "unknown"),
+            available_geometry=vector(constraint.get("available_geometry"), 4),
+        )
+        window = self.window
+        geometry = dict(
+            size=list(window.size().toTuple()), minimum=list(window.minimumSize().toTuple()),
+            maximized=window.isMaximized(), minimized=window.isMinimized(), fullscreen=window.isFullScreen(),
+            constrained_native_maximum=bool(self.constrained_native_maximum), geometry_constraint=safe_constraint,
+            pending=dict(provider=appearance_probes_pending(app), layout=bool(self._busy), timer=self.timer.isActive()),
+        )
+        _save_diagnostics(app, dict(current, window_geometry=geometry))
+
+    def _workarea_changed(self):
+        if getattr(self, "_stopped", False) or not self.window.isVisible():
+            return
+        self.timer.start(0)
 
     def _screen_changed(self, *_):
         if not self._stopped:
+            self._workarea.refresh()
             self.timer.start(0)
 
     def stop(self):
@@ -126,6 +240,8 @@ class WindowSizeGuard(QObject):
             return
         self._stopped = True
         self.timer.stop()
+        self._geometry_diagnostics_timer.stop()
+        self._workarea.changed.disconnect(self._workarea_changed)
         if self._screen is not None:
             self._screen.availableGeometryChanged.disconnect(self._screen_changed)
         if self._handle is not None:

@@ -22,6 +22,7 @@ from . import __version__
 from . import engine
 from .styles import FileDialogStyle, refresh_file_dialog_icons
 from .system_fonts import apply_system_font, system_font_css, accent_colors, accent_text, bind_appearance_refresh
+from .desktop_geometry import available_geometry
 from .flow_layout import FlowLayout
 from .appearance import configure_appearance
 from .appearance_controls import AppearanceSettingsDialog
@@ -907,9 +908,9 @@ def main() -> int:
     app.setOrganizationName("Steady State Studio")
     app.setStyle(FileDialogStyle())
     window = MainWindow()
-    screen = app.primaryScreen()
-    if screen is not None:
-        area = screen.availableGeometry()
+    screen = window.screen() or app.primaryScreen()
+    if screen is not None and not (window.isMaximized() or window.isFullScreen() or window.isMinimized()):
+        area = available_geometry(window, screen.availableGeometry())
         window.resize(min(window.width(), area.width()), min(window.height(), area.height()))
     window.show()
     paths = [arg for arg in sys.argv[1:] if not arg.startswith("-")]

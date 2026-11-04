@@ -540,6 +540,10 @@ def configure_appearance(app, settings, refresh=False, theme_key=None):
     if theme_key is not None:
         app._studio_appearance_theme_key = theme_key
     app._studio_pilot_settings = settings
+    if refresh:
+        workarea = getattr(app, "_studio_workarea_provider", None)
+        if workarea is not None:
+            workarea.refresh()
     new = not getattr(app, "_studio_pilot_configured", False)
     app._studio_pilot_configured = True
     if new or refresh:
@@ -563,12 +567,14 @@ def appearance_probes_pending(app):
     if not sys.platform.startswith("linux"):
         return False
     providers = getattr(app, "_studio_pilot_providers", {})
-    return "gtk" not in providers or "portal" not in providers
+    from .desktop_geometry import workarea_probes_pending
+    return "gtk" not in providers or "portal" not in providers or workarea_probes_pending(app)
 
 
 def appearance_details(app):
     """Copyable, content-free diagnostics; never serialize paths or raw exceptions."""
     from . import __version__
+    from .desktop_geometry import workarea_details
     font = app.font()
     actual = QFontInfo(font)
     screen = app.primaryScreen()
@@ -600,6 +606,7 @@ def appearance_details(app):
                               "point_size": actual.pointSizeF(),
                               "pixel_size": actual.pixelSize(), "exact_match": actual.exactMatch()},
               "properties": resolution,
+              "work_area": workarea_details(app),
               "scaling": {"qt_logical_dpi": screen.logicalDotsPerInchY() if screen else None,
                           "qt_device_scale": screen.devicePixelRatio() if screen else None,
                           "explicit_qt_display_scale": explicit_display_scale(screen.name() if screen else ""),
