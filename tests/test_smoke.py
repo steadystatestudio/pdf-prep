@@ -9,7 +9,14 @@ from pypdf import PdfReader
 from pdf_prep.smoke import main
 
 
-def test_package_smoke_retains_only_synthetic_relative_evidence(tmp_path):
+def test_package_smoke_retains_only_synthetic_relative_evidence(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+
+    # This inline check shares QApplication with settings-unit tests which stub
+    # desktop probes. Model a fresh package process rather than their fake cache.
+    app = QApplication.instance()
+    if app is not None:
+        monkeypatch.setattr(app, '_studio_pilot_configured', False, raising=False)
     report = tmp_path / 'package-check.json'
     assert main(report) == 0, report.read_text(encoding='utf-8')
     data = json.loads(report.read_text(encoding='utf-8'))
