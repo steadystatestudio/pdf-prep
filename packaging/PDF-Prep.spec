@@ -5,11 +5,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 root = Path(SPECPATH).parent
 sys.path.insert(0, str(root / 'scripts'))
 from linux_dependencies import omit_system_libraries
+from build_appearance_probe import appearance_datas
+appearance_data = appearance_datas(root, "pdf_prep")
+appearance_imports = ["PySide6.QtDBus"] if sys.platform == "linux" else []
 a = Analysis(
     [str(root / 'scripts/launcher.py')], pathex=[str(root / 'src')],
     binaries=collect_dynamic_libs('pypdfium2_raw'),
-    datas=collect_data_files('pypdfium2') + collect_data_files('pypdfium2_raw'),
-    hiddenimports=['pypdfium2_raw', 'pdf_prep.smoke'],
+    datas=collect_data_files('pypdfium2') + collect_data_files('pypdfium2_raw') + appearance_data,
+    hiddenimports=['pypdfium2_raw', 'pdf_prep.smoke'] + appearance_imports,
     hookspath=[str(root / 'packaging/hooks')],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
               'PySide6.QtWebEngineQuick', 'PySide6.QtQml', 'PySide6.QtQuick',

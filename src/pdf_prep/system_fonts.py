@@ -1,57 +1,23 @@
-"""Use the desktop UI font, including GTK desktop settings in bundled Qt apps.
+"""Shared UI text normalization and captured native fallback appearance.
 
-Qt owns display scaling. X11 also supplies GTK text scaling through Xft DPI,
-which Qt incorporates into its DPI/device scale. Only Wayland needs the GTK
-text factor applied explicitly; applying it again on X11 would double it.
-Desktop font changes are picked up when the app is reopened.
+Studio applications resolve Linux desktop preferences through independent,
+bounded providers in appearance.py; host Python is never invoked.
 """
 
 from __future__ import annotations
 
-import ast
+import json
 import math
 import os
 import re
 import subprocess
 import sys
-
-import json
-from pathlib import Path
 import threading
-from PySide6.QtCore import QAbstractNativeEventFilter, QEvent, QObject, QStandardPaths, QTimer, Qt
-from PySide6.QtGui import QColor, QFontDatabase, QPalette
-from PySide6.QtWidgets import QLabel, QTextEdit, QToolTip
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication
+from pathlib import Path
 
-
-def _setting(schema: str, key: str):
-    try:
-        result = _run_host(
-            ["gsettings", "get", schema, key],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=True,
-        )
-        return ast.literal_eval(result.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError, SyntaxError):
-        return None
-
-
-def _desktop_schema() -> str | None:
-    # Respect a deliberately selected Qt settings integration (qt6ct, KDE, ...).
-    theme = os.environ.get("QT_QPA_PLATFORMTHEME", "").lower()
-    if theme and theme not in {"gtk3", "gtk2", "gnome"}:
-        return None
-    desktop = (os.environ.get("XDG_CURRENT_DESKTOP", "") + ":" + os.environ.get("XDG_SESSION_DESKTOP", "")).lower()
-    if "cinnamon" in desktop:
-        return "org.cinnamon.desktop.interface"
-    if "gnome" in desktop or "ubuntu" in desktop:
-        return "org.gnome.desktop.interface"
-    if "mate" in desktop:
-        return "org.mate.interface"
-    return None
+from PySide6.QtCore import QAbstractNativeEventFilter, QEvent, QObject, QStandardPaths, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtWidgets import QApplication, QLabel, QTextEdit, QToolTip
 
 
 def desktop_font(native: QFont, description: str, scale: float, logical_dpi: float) -> QFont:
@@ -95,39 +61,21 @@ def desktop_font(native: QFont, description: str, scale: float, logical_dpi: flo
 
 
 def apply_system_font(app: QApplication) -> None:
-    """Initialize once; appearance changes must never reset or shrink the font."""
+    """Apply the resolved font without re-probing on every theme change."""
+    if getattr(app, "_studio_pilot_configured", False):
+        font = getattr(app, "_studio_appearance_resolved_font", None)
+        if font is not None and app.font() != font:
+            app.setFont(QFont(font))
+        return
     if getattr(app, "_studio_system_font_initialized", False):
         return
     capture_system_appearance(app)
-    app._studio_system_font_initialized = True
-    if not sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux"):
+        from .appearance import configure_appearance
+        configure_appearance(app, None)
+    else:
         app._studio_host_appearance["font_source"] = "native Qt platform font"
-        return
-    schema = _desktop_schema()
-    if schema is None:
-        return
-    description = app._studio_host_appearance.get("font") or _setting(schema, "font-name")
-    if (
-        not isinstance(description, str)
-        or not re.fullmatch(r"\s*.+?\s+(\d+(?:\.\d+)?)\s*", description)
-        or float(description.split()[-1]) <= 0
-    ):
-        app._studio_host_appearance["font_fallback_reason"] = "Missing or invalid desktop font preference"
-        return
-    app._studio_host_appearance["font_source"] = (
-        "host GTK font" if app._studio_host_appearance.get("font") else "gsettings font-name"
-    )
-    scale = _setting(schema, "text-scaling-factor")
-    if not isinstance(scale, (float, int)) or isinstance(scale, bool) or not math.isfinite(scale) or scale <= 0:
-        scale = 1.0
-    screen = app.primaryScreen()
-    dpi = screen.logicalDotsPerInchY() if screen else 96.0
-    if app.platformName() == "xcb":
-        # Xft DPI already carries text scaling into Qt's logical DPI or DPR.
-        # Retain the desktop point size; explicit QT_SCALE_FACTOR also remains
-        # Qt's responsibility and must not be cancelled here.
-        scale, dpi = 1.0, 96.0
-    app.setFont(desktop_font(app.font(), description, scale, dpi))
+        app._studio_system_font_initialized = True
 
 
 def system_font_css(app: QApplication) -> str:
@@ -187,32 +135,9 @@ def _run_host(command, **kwargs):
             kernel.SetDllDirectoryW(buffer.value or None)
 
 
-_GTK_PROBE = """
-import json, gi
-gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk
-if not Gtk.init_check()[0]:
-    raise RuntimeError("GTK cannot connect to the desktop")
-settings = Gtk.Settings.get_default()
-widget = Gtk.Button()
-context = widget.get_style_context()
-color = None
-for name in ("accent_bg_color", "theme_selected_bg_color", "selected_bg_color"):
-    found, rgba = context.lookup_color(name)
-    if found and rgba.alpha > .99:
-        color = "#{:02x}{:02x}{:02x}".format(round(rgba.red*255), round(rgba.green*255), round(rgba.blue*255))
-        break
-print(json.dumps({"font": settings.get_property("gtk-font-name"), "accent": color,
-                  "theme": settings.get_property("gtk-theme-name"),
-                  "xft_dpi": settings.get_property("gtk-xft-dpi")}))
-"""
-
-
 def _host_appearance() -> dict:
     if sys.platform.startswith("linux"):
-        if _desktop_schema() is None:
-            return {"source": "native Qt platform integration"}
-        command = ["/usr/bin/python3", "-c", _GTK_PROBE]
+        return {"source": "captured Qt fallback", "fallback_reason": "Desktop providers not yet resolved"}
     elif sys.platform == "win32":
         shell = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
         command = [
@@ -242,6 +167,15 @@ def _host_appearance() -> dict:
         if not isinstance(values, dict):
             raise ValueError("Invalid desktop appearance response")
         values["source"] = "Windows personalization" if sys.platform == "win32" else "host GTK settings"
+        if sys.platform == "win32":
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                    r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as key:
+                    values["color_scheme"] = ("light" if winreg.QueryValueEx(key, "AppsUseLightTheme")[0]
+                                              else "dark")
+            except OSError:
+                pass
         return values
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         return {"source": "native Qt fallback", "fallback_reason": type(exc).__name__}
@@ -253,6 +187,7 @@ def capture_system_appearance(app: QApplication) -> dict:
         app._studio_native_palette = QPalette(app.palette()) if hasattr(app, "palette") else QPalette()
         app._studio_native_font = QFont(app.font())
         app._studio_host_appearance = _host_appearance()
+        app._studio_captured_host_appearance = dict(app._studio_host_appearance)
     return app._studio_host_appearance
 
 
@@ -290,7 +225,28 @@ def accent_colors(app: QApplication) -> dict[str, str]:
     result = dict(accent=accent.name(), hover=variants[0], pressed=variants[1], on_accent=on)
     app.setProperty("studioAccent", result["accent"])
     app.setProperty("studioOnAccent", on)
-    diagnostics = dict(values, **result, effective_font=app.font().toString(), platform=app.platformName())
+    current_font = app.font()
+    family = current_font.family()
+    if not family or len(family) > 128 or any(ord(char) < 32 or char in "/\\" for char in family):
+        family = "Sans Serif"
+    # Never copy arbitrary style names, family lists or serialized font metadata.
+    # A fresh font retains only the whitelisted appearance values we disclose.
+    diagnostic_font = QFont(family)
+    points, pixels = current_font.pointSizeF(), current_font.pixelSize()
+    if math.isfinite(points) and 0 < points <= 10000:
+        diagnostic_font.setPointSizeF(points)
+    elif 0 < pixels <= 10000:
+        diagnostic_font.setPixelSize(pixels)
+    else:
+        diagnostic_font.setPointSizeF(9)
+    diagnostic_font.setWeight(current_font.weight())
+    diagnostic_font.setItalic(current_font.italic())
+    diagnostics = dict(values, **result, effective_font=diagnostic_font.toString(), platform=app.platformName())
+    if getattr(app, "_studio_pilot_configured", False):
+        from .appearance import appearance_details
+        details = json.loads(appearance_details(app))
+        diagnostics.update(properties=details["properties"], actual_font=details["actual_font"],
+                           scaling=details["scaling"], candidate=details["version"])
     if app.property("studioAppearanceDiagnostics") != diagnostics:
         app.setProperty("studioAppearanceDiagnostics", diagnostics)
         # No filenames, documents, or other user content are recorded here.
@@ -358,11 +314,21 @@ class _AppearanceWatcher(QObject):
             app.installNativeEventFilter(self.native_events)
 
     def host_changed(self):
-        self.app._studio_host_appearance = _host_appearance()
+        if sys.platform.startswith("linux"):
+            from .appearance import configure_appearance
+            configure_appearance(self.app, getattr(self.app, "_studio_pilot_settings", None), refresh=True)
+        else:
+            self.app._studio_host_appearance = _host_appearance()
+            self.app._studio_captured_host_appearance = dict(self.app._studio_host_appearance)
         if sys.platform == "win32":
             # Qt's Windows platform font comes from current NONCLIENTMETRICS.
             # It already includes Windows text sizing; do not multiply DPI again.
-            self.app.setFont(QFontDatabase.systemFont(QFontDatabase.GeneralFont))
+            font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+            self.app._studio_native_font = QFont(font)
+            self.app.setFont(font)
+            if getattr(self.app, "_studio_pilot_configured", False):
+                from .appearance import configure_appearance
+                configure_appearance(self.app, getattr(self.app, "_studio_pilot_settings", None))
         self.refresh_timer.start(0)
 
     def font_changed(self, font):

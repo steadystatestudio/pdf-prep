@@ -7,6 +7,8 @@ from importlib import metadata
 import json
 import os
 from pathlib import Path
+
+from build_appearance_probe import build as build_appearance_probe, stage_probe
 import platform
 import re
 import shutil
@@ -173,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
                  dist / f"{NAME}-x86_64.AppImage", dist / "SHA256SUMS.txt"):
         confined_output(root, path)
     build.mkdir(exist_ok=True)
+    build_appearance_probe()
     dist.mkdir(exist_ok=True)
     os.environ["PYINSTALLER_CONFIG_DIR"] = str(build / "pyinstaller-cache")
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
@@ -180,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
                     str(root / "packaging/PDF-Prep.spec")], cwd=root,
                    env=pyinstaller_environment(sys.platform), check=True, timeout=1200)
     bundle = dist / NAME
+    stage_probe(bundle, "pdf_prep")
     verify_qt_subset(bundle)
     copy_notices(root, bundle, sys.platform)
     artifacts = [make_archive(root, sys.platform)]

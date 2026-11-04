@@ -7,9 +7,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
 import subprocess
 from pathlib import Path
+
+
+def build_distribution() -> str:
+    """Describe the actual builder instead of claiming a hardcoded baseline."""
+    try:
+        release = platform.freedesktop_os_release()
+        description = " ".join(part for part in (release.get("NAME"), release.get("VERSION_ID")) if part)
+        return description or platform.system() + " (distribution metadata unavailable)"
+    except OSError:
+        return platform.system() + " (distribution metadata unavailable)"
 
 
 def package_owner(source: str) -> str:
@@ -40,10 +51,16 @@ def omit_system_libraries(analysis, manifest: Path) -> None:
     manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.write_text(json.dumps({
         "policy": "OS libraries excluded using PyInstaller Analysis.exclude_system_libraries",
-        "build_distribution": "Ubuntu 22.04; compatible Ubuntu 24.04 package equivalents are accepted",
+        "build_distribution": build_distribution(),
         "packages": packages,
         "libraries": sorted(libraries, key=lambda entry: entry["library"]),
         "install": "sudo apt-get install --no-install-recommends " + " ".join(packages),
+        "optional_appearance_provider": {
+            "library": "libgtk-3.so.0",
+            "required_to_run": False,
+            "host_python_required": False,
+            "host_pygobject_required": False,
+        },
     }, indent=2) + "\n", encoding="utf-8")
 
 
