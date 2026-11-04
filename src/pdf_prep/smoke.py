@@ -131,6 +131,8 @@ def main(report: Path) -> int:
             from .app import MainWindow
             from .styles import FileDialogStyle
             app = QApplication.instance() or QApplication([])
+            from .system_fonts import capture_system_appearance
+            capture_system_appearance(app)
             app.setStyle(FileDialogStyle())
             # Windows' offscreen plugin does not always enumerate system fonts.
             # Read the installed platform font explicitly for meaningful render
@@ -205,8 +207,12 @@ def main(report: Path) -> int:
             screenshot('desktop-light.png')
             window.set_theme('dark')
             screenshot('desktop-dark.png')
+            from .appearance_qa import capture_appearance
+            capture_appearance(app, window, artifacts)
             window.resize(1, 1)
-            app.processEvents()
+            idle()
+            window.resize(1, 1)
+            idle()
             assert window.size() == window.minimumSize()
             screenshot('narrow-dark.png')
             for button in (window.add_button, window.prepare_button, window.save_button, window.cancel_button):

@@ -19,7 +19,7 @@ Windows packages target x64. Linux x86_64 packages are built on Ubuntu 22.04; th
 
 ## Linux download
 
-The [version 1.0.5 release](https://github.com/steadystatestudio/pdf-prep/releases/tag/v1.0.5) provides `PDF-Prep-x86_64.AppImage` and `PDF-Prep-linux-x86_64.tar.gz`. Compare the download with `SHA256SUMS-Linux.txt`. Python is bundled in both formats. A graphical desktop and the ordinary Qt/X11 or Wayland runtime libraries are required; see the package's `README-LINUX.txt` and `LINUX-SYSTEM-DEPENDENCIES.json` for the recorded prerequisites. The release receipt identifies the exact source for both platform builds.
+The [version 1.1.0 release](https://github.com/steadystatestudio/pdf-prep/releases/tag/v1.1.0) provides `PDF-Prep-x86_64.AppImage` and `PDF-Prep-linux-x86_64.tar.gz`. Compare the download with `SHA256SUMS-Linux.txt`. Python is bundled in both formats. A graphical desktop and the ordinary Qt/X11 or Wayland runtime libraries are required; see the package's `README-LINUX.txt` and `LINUX-SYSTEM-DEPENDENCIES.json` for the recorded prerequisites. The release receipt identifies the exact source for both platform builds.
 
 For AppImage, make the file executable and run it. Where FUSE is unavailable, run `APPIMAGE_EXTRACT_AND_RUN=1 ./PDF-Prep-x86_64.AppImage`. For the portable archive, extract it and run `PDF-Prep/PDF-Prep`, keeping `_internal` beside the executable. Saving uses a no-replace hard link on Linux. Choose a local destination filesystem that supports hard links; unsupported destinations fail without overwriting files.
 
@@ -64,3 +64,5 @@ The build produces a portable archive and an AppImage. `python scripts/build.py 
 
 
 Native packages are built and tested privately from the release's published source commit. Public releases retain the package checksums, build and platform receipts, matching dependency sources and synthetic QA; private build logs are not linked as public evidence.
+
+See [Desktop appearance](docs/APPEARANCE.md) for system fonts, accents, scaling and restart behavior.

@@ -1,5 +1,13 @@
 # Changes
 
+## 1.1.0 — 2026-11-03
+
+All interface text follows the configured desktop UI size, including headings, Help, tables and status. Document pages, exported captions and watermarks retain their own content typography.
+
+Primary actions, enabled toggles, selections and progress use the system accent, with readable contrasting text. Secondary actions stay neutral. Desktop settings helpers use the host library environment, including in portable packages.
+
+Compact controls preserve more vertical working space. File Renamer keeps its rule controls, Rename and Undo together: Rename shifts horizontally when needed, and resizing stops before the row collides. Layouts adapt to enlarged fonts and constrained monitor work areas.
+
 ## 1.0.5 — 2026-11-03
 
 - Restore a useful minimum window size so the preview, everyday controls, task actions and status remain visible together.

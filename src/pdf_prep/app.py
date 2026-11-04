@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 from . import __version__
 from . import engine
 from .styles import FileDialogStyle, refresh_file_dialog_icons
-from .system_fonts import apply_system_font, system_font_css
+from .system_fonts import apply_system_font, system_font_css, accent_colors, accent_text, bind_appearance_refresh
 from .flow_layout import FlowLayout
 
 
@@ -36,6 +36,10 @@ def size_text(size: int) -> str:
 
 
 def apply_theme(app: QApplication, choice: str) -> None:
+    apply_system_font(app)
+    colors = accent_colors(app)
+    accent, on_accent = colors["accent"], colors["on_accent"]
+    hover, pressed = colors["hover"], colors["pressed"]
     dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
     if choice == "system" and os.name == "nt":
         try:
@@ -53,7 +57,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
     for role, color in ((QPalette.ColorRole.Window, window), (QPalette.ColorRole.WindowText, text),
                         (QPalette.ColorRole.Base, field), (QPalette.ColorRole.Text, text),
                         (QPalette.ColorRole.Button, panel), (QPalette.ColorRole.ButtonText, text),
-                        (QPalette.ColorRole.Highlight, "#508fdb"), (QPalette.ColorRole.HighlightedText, "#111111"),
+                        (QPalette.ColorRole.Highlight, accent), (QPalette.ColorRole.HighlightedText, on_accent),
                         (QPalette.ColorRole.ToolTipBase, panel), (QPalette.ColorRole.ToolTipText, text)):
         palette.setColor(role, QColor(color))
     app.setPalette(palette)
@@ -62,30 +66,30 @@ def apply_theme(app: QApplication, choice: str) -> None:
     app.setStyleSheet(f"""
         QWidget {{ {system_font_css(app)} color: {text}; }}
         QMainWindow, QDialog {{ background: {window}; }}
-        QPushButton, QToolButton {{ background: {panel}; border: 1px solid {border}; border-radius: 6px; padding: 8px 12px; min-height: 20px; }}
-        QPushButton:hover, QToolButton:hover {{ background: {field}; border-color: #508fdb; }}
-        QPushButton:pressed, QToolButton:pressed {{ background: #508fdb; color: #111111; }}
+        QPushButton, QToolButton {{ background: {panel}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; min-height: 0px; }}
+        QPushButton:hover, QToolButton:hover {{ background: {field}; border-color: {accent}; }}
+        QPushButton:pressed, QToolButton:pressed {{ background: {accent}; color: {on_accent}; }}
         QPushButton:disabled, QToolButton:disabled {{ color: {muted}; border-color: {border}; }}
         QPushButton:enabled:focus, QToolButton:enabled:focus, QComboBox:enabled:focus,
         QDoubleSpinBox:enabled:focus {{ border: 2px solid {focus}; padding: 7px 11px; }}
-        QPushButton#savePdf {{ background: #2768ad; border-color: #2768ad; color: white; font-weight: 600; min-width: 128px; }}
-        QPushButton#savePdf:enabled:hover {{ background: #2f6db1; }}
-        QPushButton#savePdf:enabled:focus {{ border-color: {focus}; }}
+        QPushButton#savePdf {{ background: {accent}; border-color: {accent}; color: {on_accent}; font-weight: 600; min-width: 128px; }}
+        QPushButton#savePdf:enabled:hover {{ background: {hover}; }}
+        QPushButton#savePdf:enabled:focus {{ border-color: {on_accent}; }}
         QPushButton#savePdf:disabled {{ background: {border}; border-color: {border}; color: {muted}; }}
         QFrame#settingsPanel {{ background: {panel}; border: 1px solid {border}; border-radius: 10px; }}
         QLabel#muted {{ color: {muted}; }}
         QLabel#sectionTitle {{ font-weight: 600; }}
-        QLabel#outputInfo {{ color: {"#83b8f3" if dark else "#2464b1"}; font-weight: 600; }}
+        QLabel#outputInfo {{ color: {accent_text(app, panel)}; font-weight: 600; }}
         QLabel#status {{ font-weight: 600; }}
         QComboBox, QDoubleSpinBox {{ background: {field}; border: 1px solid {border}; border-radius: 6px; padding: 7px; min-height: 22px; }}
-        QComboBox QAbstractItemView, QMenu {{ background: {panel}; color: {text}; selection-background-color: #508fdb; selection-color: #111111; }}
+        QComboBox QAbstractItemView, QMenu {{ background: {panel}; color: {text}; selection-background-color: {accent}; selection-color: {on_accent}; }}
         QMenu::item {{ padding: 8px 18px; }}
-        QListWidget {{ background: {panel}; border: 1px solid {border}; border-radius: 8px; selection-background-color: #508fdb; selection-color: #111111; outline: none; }}
+        QListWidget {{ background: {panel}; border: 1px solid {border}; border-radius: 8px; selection-background-color: {accent}; selection-color: {on_accent}; outline: none; }}
         QListWidget::item {{ padding: 8px; border-bottom: 1px solid {border}; }}
-        QListWidget::item:selected {{ background: #508fdb; color: #111111; }}
+        QListWidget::item:selected {{ background: {accent}; color: {on_accent}; }}
         QListWidget:focus {{ border: 2px solid {focus}; }}
         QProgressBar {{ background: {panel}; border: 1px solid {border}; border-radius: 5px; min-height: 12px; max-height: 12px; }}
-        QProgressBar::chunk {{ background: #508fdb; border-radius: 4px; }}
+        QProgressBar::chunk {{ background: {accent}; border-radius: 4px; }}
         QSplitter::handle {{ background: {window}; }}
         QSplitter::handle:horizontal {{ width: 12px; }}
         QToolTip {{ background: {panel}; color: {text}; border: 1px solid {border}; padding: 6px; }}
@@ -94,6 +98,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
         QFileDialog QToolButton {{ padding: 2px; min-height: 0px; }}
         QFileDialog QToolButton:enabled:focus {{ padding: 1px; }}
     """)
+    bind_appearance_refresh(app, lambda: apply_theme(app, choice))
     refresh_file_dialog_icons(app)
 
 
@@ -858,6 +863,8 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    from .system_fonts import capture_system_appearance
+    capture_system_appearance(app)
     app.setApplicationName("PDF Prep")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("Steady State Studio")

@@ -102,6 +102,9 @@ def copy_notices(root: Path, package: Path, target_platform: str) -> None:
     shutil.copyfile(python_license(), licenses / "Python/LICENSE.txt")
     for name in ("LICENSE", "README.md", "THIRD-PARTY.md", "SOURCE-INDEX.json"):
         shutil.copyfile(root / name, package / name)
+    if (root / "docs/APPEARANCE.md").is_file():
+        (package / "docs").mkdir(exist_ok=True)
+        shutil.copy2(root / "docs/APPEARANCE.md", package / "docs/APPEARANCE.md")
     if target_platform == "linux":
         shutil.copyfile(root / "build/LINUX-SYSTEM-DEPENDENCIES.json", package / "LINUX-SYSTEM-DEPENDENCIES.json")
         shutil.copyfile(root / "packaging/linux/README-LINUX.txt", package / "README-LINUX.txt")
