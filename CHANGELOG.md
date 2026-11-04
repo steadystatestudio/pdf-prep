@@ -1,5 +1,12 @@
 # Changes
 
+## 1.2.0 — 2026-11-04
+
+- Open a fitted Appearance settings dialog directly, with system/custom font and accent choices and a reset to System. Linux desktop matching no longer needs system Python or PyGObject.
+- Resolve desktop preferences independently through native/portal settings, KDE or explicit qt6ct preferences, with honest readable fallbacks. Refresh preserves explicit choices.
+- Measure minimum windows from controls and a useful workspace instead of multiplying the complete window size by the font size. Long content and small-screen overflow can scroll while actions stay visible.
+- Keep source/prepared-page inspection and Prepare → inspect → Save behavior, with measured page rows and monitor-bounded inspection/help windows.
+
 ## 1.1.0 — 2026-11-03
 
 All interface text follows the configured desktop UI size, including headings, Help, tables and status. Document pages, exported captions and watermarks retain their own content typography.

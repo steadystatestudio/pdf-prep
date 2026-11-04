@@ -35,8 +35,9 @@ def test_dragging_smaller_keeps_complete_workspace(sized_window):
     window, _ = sized_window
     window.resize(1, 1)
     QTest.qWait(80)
-    assert window.width() >= 980
-    assert window.height() >= 720
+    assert window.width() >= window.compact_minimum_width()
+    assert window.preview.width() >= 260 and window.preview.height() >= 220
+    assert window.page_list.height() >= 224
     scroll = getattr(window, "work_scroll", None)
     if scroll is not None:
         assert scroll.horizontalScrollBar().maximum() == 0
@@ -66,7 +67,10 @@ def test_larger_font_grows_minimum_without_shrinking_text(sized_window):
     before = window.minimumSize()
     font = window.font()
     font.setPointSize(18)
-    window.setFont(font)
+    window.settings.setValue("appearance/font_mode", "custom")
+    window.settings.setValue("appearance/font_family", font.family())
+    window.settings.setValue("appearance/font_size_pt", 18)
+    window._reapply_appearance()
     QTest.qWait(80)
     assert window.font().pointSize() == 18
     assert window.minimumWidth() > before.width()

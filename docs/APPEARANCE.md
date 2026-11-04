@@ -1,11 +1,13 @@
 # Desktop appearance
 
-All interface text uses the configured desktop UI font family and effective size. Headings use weight for emphasis. This includes buttons, tables, menus, tooltips, dialogs, Help and status. Typography inside actual documents, photos and exported content is unchanged. Window decorations belong to the operating system.
+Every interface text surface uses the same effective UI font and size; headings use weight. Actual document pages, photo content and exported typography are preserved. Window decorations remain controlled by the operating system.
 
-Primary actions, enabled toggles, selected items and progress use the native personalization/selection accent. An accent can differ from the titlebar close-button color. Normal secondary actions remain neutral. Text on accent fills uses contrasting black or white; focus and disabled states remain distinct.
+Settings opens a fitted dialog directly. System matching is the default. Optional custom font/size and accent choices apply throughout the interface; Reset appearance to System changes appearance only. Refresh system settings preserves explicit overrides. No diagnostic-copy button is shown in production.
 
-Windows uses the native Qt font integration and Windows personalization settings. Native appearance notifications refresh the app. Cinnamon, GNOME and MATE preferences are read from the host desktop, including when the app is packaged. Reopen the app after changing GTK desktop font, text scaling or accent/theme preferences. Changing Light/Dark inside the app preserves its resolved font.
+Linux appearance reads supported desktop/portal, KDE and explicitly selected qt6ct preferences independently. A small isolated native helper can query optional host GTK settings without system Python or PyGObject. Missing integration retains readable Qt/application fallbacks; a fallback is not proof that system matching succeeded. Windows retains native font and personalization settings.
 
-Display scaling belongs to Qt. X11 text scaling carried by Xft DPI is not multiplied again. Wayland text scaling is resolved separately from display scaling. Layouts measure the resulting text; they do not shrink it to fit. On a monitor too small for the useful minimum, configuration can reflow and work areas scroll while actions and status remain available.
+Display scaling remains Qt's responsibility. Provider-specific font normalization avoids applying text scaling twice. Theme changes preserve the resolved font and accent. If the desktop sends no change notification, use Refresh system settings after changing its preferences.
 
-If desktop integration is unavailable, the captured native palette is retained, then a readable Studio blue is the final fallback. The app records appearance sources and fallback reasons in `appearance.json` in its local application-data folder. That diagnostic contains appearance settings, not document paths or content. A fallback is not proof of a verified system match.
+Primary actions, selected controls/rows and progress use the resolved accent with readable contrasting text. Secondary actions remain neutral, and disabled controls and focus remain distinct. Content viewers may scroll; ordinary forms fit on adequate screens and reserve scrolling for constrained work areas. Main-window minimums combine measured controls with a useful preview/list reserve.
+
+Local appearance diagnostics record the build, providers, effective values and bounded fallback reasons. They exclude document names, home paths and full environment dumps. Nothing is uploaded automatically.

@@ -305,9 +305,12 @@ def test_system_font_is_preserved_with_reachable_compact_actions(app, tmp_path, 
     original = QFont(app.font())
     font = QFont(original)
     font.setPointSizeF(points)
-    app.setFont(font)
+    settings = QSettings(str(tmp_path / "font.ini"), QSettings.Format.IniFormat)
+    settings.setValue("appearance/font_mode", "custom")
+    settings.setValue("appearance/font_family", font.family())
+    settings.setValue("appearance/font_size_pt", points)
     try:
-        window = MainWindow(QSettings(str(tmp_path / "font.ini"), QSettings.Format.IniFormat))
+        window = MainWindow(settings)
         _use_test_screen(window, monkeypatch, 800, 600)
         window.show()
         window.resize(800, 600)
@@ -340,3 +343,36 @@ def _use_test_screen(window, monkeypatch, width, height):
                                   availableGeometryChanged=screen.availableGeometryChanged)
     monkeypatch.setattr(window, "screen", lambda: replacement)
     window.window_size_guard.update()
+
+
+def test_direct_settings_dialog_preserves_pdf_plan_and_size_choice(app, window):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QDialogButtonBox, QPushButton
+    from pdf_prep.appearance_controls import AppearanceSettingsDialog
+    before_limit = window.limit_spin.value()
+    errors = []
+
+    def inspect():
+        dialog = app.activeModalWidget()
+        try:
+            assert isinstance(dialog, AppearanceSettingsDialog)
+            assert not any("copy" in button.text().lower() for button in dialog.findChildren(QPushButton))
+            assert dialog.scroll.verticalScrollBar().maximum() == 0
+            dialog.controls.font_mode.setCurrentIndex(1)
+            dialog.controls.font_size.setValue(16)
+            dialog.controls.accent_mode.setCurrentIndex(1)
+            dialog.controls.accent_color = QColor("#d34f91")
+            dialog.buttons.button(QDialogButtonBox.StandardButton.Save).click()
+        except Exception as exc:
+            errors.append(str(exc))
+            dialog.reject()
+
+    QTimer.singleShot(100, inspect)
+    window.settings_button.click()
+    assert not errors, errors
+    assert window.settings.value("appearance/font_mode") == "custom"
+    assert app.font().pointSizeF() == 16
+    assert app.property("studioAccent") == "#d34f91"
+    assert window.limit_spin.value() == before_limit
+    assert not window.save_button.isEnabled(), "Appearance changes must not invent a prepared PDF"

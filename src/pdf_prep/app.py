@@ -10,12 +10,12 @@ from typing import Callable
 
 from PIL import Image
 from PySide6.QtCore import Qt, QItemSelectionModel, QSettings, QSize, QThread, Signal, QUrl, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QImage, QKeySequence, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QSplitter, QToolButton, QVBoxLayout, QWidget,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QProgressBar,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
 )
 
 from . import __version__
@@ -23,6 +23,9 @@ from . import engine
 from .styles import FileDialogStyle, refresh_file_dialog_icons
 from .system_fonts import apply_system_font, system_font_css, accent_colors, accent_text, bind_appearance_refresh
 from .flow_layout import FlowLayout
+from .appearance import configure_appearance
+from .appearance_controls import AppearanceSettingsDialog
+from .content_dialog import TextContentDialog, fit_viewer
 
 
 def image_pixmap(image: Image.Image) -> QPixmap:
@@ -41,6 +44,9 @@ def apply_theme(app: QApplication, choice: str) -> None:
     accent, on_accent = colors["accent"], colors["on_accent"]
     hover, pressed = colors["hover"], colors["pressed"]
     dark = app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+    resolved_scheme = getattr(app, "_studio_appearance_values", {}).get("color_scheme")
+    if choice == "system" and resolved_scheme in {"dark", "light"}:
+        dark = resolved_scheme == "dark"
     if choice == "system" and os.name == "nt":
         try:
             import winreg
@@ -68,20 +74,20 @@ def apply_theme(app: QApplication, choice: str) -> None:
         QMainWindow, QDialog {{ background: {window}; }}
         QPushButton, QToolButton {{ background: {panel}; border: 1px solid {border}; border-radius: 6px; padding: 6px 10px; min-height: 0px; }}
         QPushButton:hover, QToolButton:hover {{ background: {field}; border-color: {accent}; }}
-        QPushButton:pressed, QToolButton:pressed {{ background: {accent}; color: {on_accent}; }}
+        QPushButton:pressed, QToolButton:pressed {{ background: {pressed}; color: {on_accent}; }}
         QPushButton:disabled, QToolButton:disabled {{ color: {muted}; border-color: {border}; }}
         QPushButton:enabled:focus, QToolButton:enabled:focus, QComboBox:enabled:focus,
-        QDoubleSpinBox:enabled:focus {{ border: 2px solid {focus}; padding: 7px 11px; }}
+        QDoubleSpinBox:enabled:focus {{ border: 2px solid {focus}; }}
         QPushButton#savePdf {{ background: {accent}; border-color: {accent}; color: {on_accent}; font-weight: 600; min-width: 128px; }}
         QPushButton#savePdf:enabled:hover {{ background: {hover}; }}
         QPushButton#savePdf:enabled:focus {{ border-color: {on_accent}; }}
         QPushButton#savePdf:disabled {{ background: {border}; border-color: {border}; color: {muted}; }}
-        QFrame#settingsPanel {{ background: {panel}; border: 1px solid {border}; border-radius: 10px; }}
+        QFrame#settingsPanel {{ background: transparent; border: 0; }}
         QLabel#muted {{ color: {muted}; }}
         QLabel#sectionTitle {{ font-weight: 600; }}
         QLabel#outputInfo {{ color: {accent_text(app, panel)}; font-weight: 600; }}
         QLabel#status {{ font-weight: 600; }}
-        QComboBox, QDoubleSpinBox {{ background: {field}; border: 1px solid {border}; border-radius: 6px; padding: 7px; min-height: 22px; }}
+        QComboBox, QDoubleSpinBox {{ background: {field}; border: 1px solid {border}; border-radius: 6px; padding: 5px 7px; min-height: 0px; }}
         QComboBox QAbstractItemView, QMenu {{ background: {panel}; color: {text}; selection-background-color: {accent}; selection-color: {on_accent}; }}
         QMenu::item {{ padding: 8px 18px; }}
         QListWidget {{ background: {panel}; border: 1px solid {border}; border-radius: 8px; selection-background-color: {accent}; selection-color: {on_accent}; outline: none; }}
@@ -98,7 +104,8 @@ def apply_theme(app: QApplication, choice: str) -> None:
         QFileDialog QToolButton {{ padding: 2px; min-height: 0px; }}
         QFileDialog QToolButton:enabled:focus {{ padding: 1px; }}
     """)
-    bind_appearance_refresh(app, lambda: apply_theme(app, choice))
+    app.setProperty("studioThemeChoice", choice)
+    bind_appearance_refresh(app, lambda: apply_theme(app, app.property("studioThemeChoice") or "system"))
     refresh_file_dialog_icons(app)
 
 
@@ -107,7 +114,7 @@ class Preview(QWidget):
         super().__init__()
         self.pixmap = QPixmap()
         self.empty_text = "Add PDFs or photos to begin"
-        self.setMinimumSize(100, 100)
+        self.setMinimumSize(260, 220)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setAccessibleName("Document page preview")
 
@@ -165,13 +172,17 @@ class MainWindow(QMainWindow):
         self.theme = str(self.settings.value("appearance", "system"))
         if self.theme not in {"system", "light", "dark"}:
             self.theme = "system"
+        configure_appearance(QApplication.instance(), self.settings, theme_key="appearance")
         apply_theme(QApplication.instance(), self.theme)
         self.setWindowTitle(f"PDF Prep {__version__} · Steady State Studio")
         self.setAcceptDrops(True)
         self.resize(1160, 820)
         self._build_ui()
+        saved_geometry = self.settings.value("geometry")
+        if saved_geometry is not None:
+            self.restoreGeometry(saved_geometry)
         from .window_size import WindowSizeGuard
-        self.window_size_guard = WindowSizeGuard(self, (980, 720), self.work_scroll)
+        self.window_size_guard = WindowSizeGuard(self, (780, 520), self.work_scroll)
         self._shortcuts()
         QApplication.instance().styleHints().colorSchemeChanged.connect(self._system_theme_changed)
         self._update_controls()
@@ -191,6 +202,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
         toolbar = FlowLayout()
+        self.toolbar_layout = toolbar
         self.add_button = self._button("Add Files", "addFiles", self.add_files, "Add PDFs, JPEGs and PNGs (Ctrl+O)")
         self.clear_button = self._button("Clear", "clearPages", self.clear_pages)
         toolbar.addWidget(self.add_button)
@@ -198,23 +210,8 @@ class MainWindow(QMainWindow):
         toolbar.addStretch()
         toolbar.addWidget(self._button("Help", "help", self.show_help))
         toolbar.addWidget(self._button("Donate", "donate", lambda: QDesktopServices.openUrl(QUrl("https://ko-fi.com/steadystatestudio"))))
-        settings_button = QToolButton()
-        settings_button.setText("Settings")
-        settings_button.setObjectName("settings")
-        settings_button.setAccessibleName("Settings")
-        settings_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        menu = QMenu(settings_button)
-        menu.addSection("Appearance")
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-        for choice in ("system", "light", "dark"):
-            action = menu.addAction(choice.title())
-            action.setCheckable(True)
-            action.setChecked(choice == self.theme)
-            action.triggered.connect(lambda checked=False, value=choice: self.set_theme(value))
-            group.addAction(action)
-        settings_button.setMenu(menu)
-        toolbar.addWidget(settings_button)
+        self.settings_button = self._button("Settings", "settings", self.show_settings)
+        toolbar.addWidget(self.settings_button)
         root.addLayout(toolbar)
 
         work = QWidget()
@@ -223,7 +220,7 @@ class MainWindow(QMainWindow):
         panel = QFrame()
         panel.setObjectName("settingsPanel")
         settings_grid = QGridLayout(panel)
-        settings_grid.setContentsMargins(12, 10, 12, 10)
+        settings_grid.setContentsMargins(0, 0, 0, 0)
         settings_grid.setHorizontalSpacing(10)
         output_label = QLabel("Output")
         self.mode_combo = QComboBox()
@@ -276,6 +273,7 @@ class MainWindow(QMainWindow):
         self.page_list.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.page_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.page_list.setMinimumWidth(220)
+        self.page_list.setMinimumHeight(224)
         self.page_list.currentRowChanged.connect(self.selection_changed)
         self.page_list.itemSelectionChanged.connect(self._update_controls)
         left_layout.addWidget(self.page_list, 1)
@@ -328,6 +326,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.output_info)
         splitter.addWidget(right)
         splitter.setSizes([330, 780])
+        self.work_splitter = splitter
         work_layout.addWidget(splitter, 1)
         self.work_scroll = QScrollArea()
         self.work_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -337,6 +336,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self.work_scroll, 1)
 
         actions = FlowLayout()
+        self.actions_layout = actions
         self.prepare_button = self._button("Prepare preview", "preparePreview", self.prepare_output, "Build and inspect the actual output before saving (Ctrl+P)")
         self.save_button = self._button("Save PDF", "savePdf", self.save_dialog, "Save the inspected PDF as a new file (Ctrl+S)")
         self.cancel_button = self._button("Cancel", "cancelWork", self.cancel_work, "Stop safely; no output file is written")
@@ -381,8 +381,37 @@ class MainWindow(QMainWindow):
     def set_theme(self, choice):
         self.theme = choice
         self.settings.setValue("appearance", choice)
+        configure_appearance(QApplication.instance(), self.settings, theme_key="appearance")
         apply_theme(QApplication.instance(), choice)
         self.preview.update()
+
+    def _reapply_appearance(self):
+        self.theme = str(self.settings.value("appearance", "system"))
+        configure_appearance(QApplication.instance(), self.settings, theme_key="appearance")
+        apply_theme(QApplication.instance(), self.theme)
+        self.preview.update()
+        self._resize_page_rows()
+        if hasattr(self, "window_size_guard"):
+            self.window_size_guard.update()
+
+    def show_settings(self):
+        if not self.busy:
+            dialog = AppearanceSettingsDialog(self.settings, self, theme_key="appearance",
+                                              apply_callback=self._reapply_appearance)
+            dialog.exec()
+
+    def compact_minimum_width(self):
+        def row_width(layout):
+            items = [layout.itemAt(index) for index in range(layout.count())
+                     if layout.itemAt(index).widget() and not layout.itemAt(index).isEmpty()]
+            return sum(item.sizeHint().width() for item in items) + max(0, len(items)-1) * layout.spacing()
+        return max(780, row_width(self.toolbar_layout) + 32, row_width(self.actions_layout) + 32,
+                   self.work_splitter.minimumSizeHint().width() + 32)
+
+    def _resize_page_rows(self):
+        height = max(self.page_list.iconSize().height(), 2 * self.fontMetrics().lineSpacing()) + 16
+        for row in range(self.page_list.count()):
+            self.page_list.item(row).setSizeHint(QSize(210, height))
 
     def _system_theme_changed(self, *_):
         if self.theme == "system":
@@ -408,6 +437,7 @@ class MainWindow(QMainWindow):
         ready = bool(self.pages) and not self.busy
         selected = self.selected_rows()
         self.add_button.setEnabled(not self.busy)
+        self.settings_button.setEnabled(not self.busy)
         self.clear_button.setEnabled(ready)
         self.page_list.setEnabled(not self.busy)
         self.mode_combo.setEnabled(not self.busy)
@@ -586,7 +616,8 @@ class MainWindow(QMainWindow):
         self.page_list.clear()
         for index, page in enumerate(self.pages):
             item = QListWidgetItem(f"{index + 1} · {page.source.name}\nSource page {page.index + 1} · {page.rotation % 360}°")
-            item.setSizeHint(QSize(210, 112))
+            item.setSizeHint(QSize(210, max(self.page_list.iconSize().height(),
+                                          2 * self.fontMetrics().lineSpacing()) + 16))
             item.setToolTip(f"Output page {index + 1}\n{page.source}\nSource page {page.index + 1}; rotation {page.rotation % 360}°")
             if self.thumbnails[index] is not None:
                 item.setIcon(QIcon(image_pixmap(self.thumbnails[index])))
@@ -808,7 +839,6 @@ class MainWindow(QMainWindow):
             return
         dialog = QDialog(self)
         dialog.setWindowTitle("Inspect page · " + self.preview_caption.text())
-        dialog.resize(950, 760)
         layout = QVBoxLayout(dialog)
         label = QLabel()
         label.setPixmap(image_pixmap(self._preview_image))
@@ -824,10 +854,11 @@ class MainWindow(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(buttons)
+        fit_viewer(dialog)
         dialog.exec()
 
     def show_help(self):
-        QMessageBox.information(self, "PDF Prep · Steady State Studio", (
+        text = (
             f"PDF Prep {__version__}\nA free, local tool from Steady State Studio.\n\n"
             "1. Add PDFs, JPEGs or PNGs. Drag files onto the window if you prefer.\n"
             "2. Select pages to move, rotate or remove. Ctrl/Shift selects multiple pages. Extract selected keeps only those pages in the plan.\n"
@@ -837,7 +868,9 @@ class MainWindow(QMainWindow):
             "Encrypted PDFs, interactive forms and digitally signed PDFs are rejected; use a suitable PDF editor for those documents. This is not PDF/A validation, OCR or a redaction tool.\n\n"
             "Files are processed on your computer, without accounts, uploads or telemetry. Appearance and maximum-size preferences are saved locally; document paths are not retained. Donate opens the optional external Ko-fi page.\n\n"
             "Shortcuts: Ctrl+O add · Alt+Up/Down move · Ctrl+R rotate · Delete remove · Ctrl+P prepare · Ctrl+S save"
-        ))
+        )
+        TextContentDialog("PDF Prep · Help", text, self, settings=self.settings,
+                          width_key="dialogs/help/width").exec()
 
     def dragEnterEvent(self, event):
         if not self.busy and event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -857,11 +890,14 @@ class MainWindow(QMainWindow):
                 self.cancel_work()
             event.ignore()
             return
+        self.settings.setValue("geometry", self.saveGeometry())
         self.settings.sync()
+        self.window_size_guard.stop()
         event.accept()
 
 
 def main() -> int:
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
     app = QApplication(sys.argv)
     from .system_fonts import capture_system_appearance
     capture_system_appearance(app)

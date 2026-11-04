@@ -1,12 +1,12 @@
 """Keep a useful desktop workspace visible at the smallest allowed window size."""
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer, Qt
 
 
 class WindowSizeGuard(QObject):
     """Protect the complete working layout; allow overflow only on small screens.
 
-    Baselines describe each app's useful workspace in logical pixels at a normal
-    UI font. Actual layout requirements can increase them. Qt already accounts
+    Baselines reserve useful preview/list space in logical pixels. Actual control
+    measurements, rather than a font multiplier on that space, set the minimum. Qt already accounts
     for display scaling, so devicePixelRatio must not be applied again.
     """
 
@@ -18,6 +18,7 @@ class WindowSizeGuard(QObject):
         self._screen = None
         self._handle = None
         self._busy = False
+        self._stopped = False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.update)
@@ -25,24 +26,31 @@ class WindowSizeGuard(QObject):
         self.timer.start(0)
 
     def eventFilter(self, watched, event):
+        if self._stopped:
+            return False
+        if event.type() == QEvent.Hide:
+            self.timer.stop()
+            return False
         if not self._busy and event.type() in {
             QEvent.Show, QEvent.Resize, QEvent.FontChange,
-            QEvent.ApplicationFontChange, QEvent.StyleChange,
+            QEvent.ApplicationFontChange, QEvent.StyleChange, QEvent.LayoutRequest,
         }:
             self.timer.start(0)
         return False
 
     def update(self, available=None):
-        if self._busy:
+        if self._stopped or self._busy or not self.window.isVisible():
             return
         self._busy = True
         try:
             window = self.window
             handle = window.windowHandle()
             if handle is not None and handle is not self._handle:
-                handle.screenChanged.connect(lambda *_: self.timer.start(0))
+                handle.screenChanged.connect(self._screen_changed)
                 self._handle = handle
             screen = window.screen()
+            if screen is None:
+                return
             if screen is not self._screen:
                 if self._screen is not None:
                     self._screen.availableGeometryChanged.disconnect(self._screen_changed)
@@ -53,8 +61,9 @@ class WindowSizeGuard(QObject):
             extra_w = max(0, frame.width() - window.width())
             extra_h = max(0, frame.height() - window.height())
             cap = QSize(max(1, area.width() - extra_w), max(1, area.height() - extra_h))
-            scale = max(1.0, window.fontMetrics().height() / 16.0)
-            wanted = QSize(round(self.baseline.width() * scale), round(self.baseline.height() * scale))
+            wanted = QSize(self.baseline)
+            if hasattr(window, "compact_minimum_width"):
+                wanted.setWidth(max(wanted.width(), window.compact_minimum_width()))
             central = window.centralWidget()
             layout = central.layout()
             layout.activate()
@@ -84,6 +93,14 @@ class WindowSizeGuard(QObject):
                 complete_height = (sum(heights) + max(0, len(heights) - 1) * layout.spacing()
                                    + margins.top() + margins.bottom())
                 wanted.setHeight(max(wanted.height(), complete_height))
+            if self.scroll is not None:
+                # This scroll area is a constrained-screen fallback, not a way
+                # to shrink the everyday layout. Suppressing redundant bars
+                # also avoids width/height-for-width scrollbar feedback loops.
+                fits = wanted.width() <= cap.width() and wanted.height() <= cap.height()
+                policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff if fits else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+                self.scroll.setHorizontalScrollBarPolicy(policy)
+                self.scroll.setVerticalScrollBarPolicy(policy)
             minimum = wanted.boundedTo(cap)
             self.preferredMinimum = wanted
             if window.minimumSize() != minimum:
@@ -101,4 +118,16 @@ class WindowSizeGuard(QObject):
             self._busy = False
 
     def _screen_changed(self, *_):
-        self.timer.start(0)
+        if not self._stopped:
+            self.timer.start(0)
+
+    def stop(self):
+        if self._stopped:
+            return
+        self._stopped = True
+        self.timer.stop()
+        if self._screen is not None:
+            self._screen.availableGeometryChanged.disconnect(self._screen_changed)
+        if self._handle is not None:
+            self._handle.screenChanged.disconnect(self._screen_changed)
+        self.window.removeEventFilter(self)

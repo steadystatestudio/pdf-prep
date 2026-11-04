@@ -68,9 +68,8 @@ def test_app_html_keeps_heading_and_small_text_at_system_size():
 @pytest.mark.parametrize(
     "failure", [FileNotFoundError(), OSError("host library unavailable"), ValueError("invalid preferences")]
 )
-def test_host_query_failure_retains_a_diagnostic(monkeypatch, failure):
-    monkeypatch.setattr(appearance.sys, "platform", "linux")
-    monkeypatch.setattr(appearance, "_desktop_schema", lambda: "org.cinnamon.desktop.interface")
+def test_windows_host_query_failure_retains_a_diagnostic(monkeypatch, failure):
+    monkeypatch.setattr(appearance.sys, "platform", "win32")
 
     def fail(*args, **kwargs):
         raise failure
