@@ -24,6 +24,21 @@ def app():
     return instance
 
 
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_neutral_palette_border_remains_visible(app, theme):
+    from PySide6.QtGui import QPalette
+    from pdf_prep.system_fonts import contrast_ratio
+
+    before = app.property("dark")
+    try:
+        apply_theme(app, theme)
+        palette = app.palette()
+        assert contrast_ratio(palette.color(QPalette.Mid),
+                              palette.color(QPalette.Button)) >= 1.2
+    finally:
+        apply_theme(app, "dark" if before else "light")
+
+
 def _rendered_icon_images(app, button):
     icon = button.icon()
     painted = button.grab().toImage()

@@ -63,6 +63,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
     for role, color in ((QPalette.ColorRole.Window, window), (QPalette.ColorRole.WindowText, text),
                         (QPalette.ColorRole.Base, field), (QPalette.ColorRole.Text, text),
                         (QPalette.ColorRole.Button, panel), (QPalette.ColorRole.ButtonText, text),
+                        (QPalette.ColorRole.Mid, border),
                         (QPalette.ColorRole.Highlight, accent), (QPalette.ColorRole.HighlightedText, on_accent),
                         (QPalette.ColorRole.ToolTipBase, panel), (QPalette.ColorRole.ToolTipText, text)):
         palette.setColor(role, QColor(color))
