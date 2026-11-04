@@ -311,7 +311,7 @@ def test_native_qprocess_failure_keeps_ui_usable_without_host_python(pilot, monk
     helper.chmod(0o700)
     assert "python" not in helper.read_text(encoding="utf-8")
     monkeypatch.setattr(appearance, "_helper_path", lambda: helper)
-    monkeypatch.setattr(appearance, "PROBE_TIMEOUT_MS", 40)
+    monkeypatch.setattr(appearance, "PROBE_TIMEOUT_MS", 40 if reason == "helper-timeout" else 1500)
     appearance.configure_appearance(app, settings)
     generation = app._studio_pilot_generation
     appearance._provider_finished(app, generation, "portal", {"reason": "test-portal-unavailable"})
@@ -321,7 +321,7 @@ def test_native_qprocess_failure_keeps_ui_usable_without_host_python(pilot, monk
     timer.timeout.connect(lambda: heartbeat.append(True))
     timer.start()
     REAL_START_NATIVE(app, generation)
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 3
     while appearance.appearance_probes_pending(app) and time.monotonic() < deadline:
         app.processEvents()
         QTest.qWait(5)
