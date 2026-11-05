@@ -87,7 +87,7 @@ def apply_theme(app: QApplication, choice: str) -> None:
         QFrame#settingsPanel {{ background: transparent; border: 0; }}
         QLabel#muted {{ color: {muted}; }}
         QLabel#sectionTitle {{ font-weight: 600; }}
-        QLabel#outputInfo {{ color: {accent_text(app, panel)}; font-weight: 600; }}
+        QLabel#outputInfo {{ color: {accent_text(app, window)}; font-weight: 600; }}
         QLabel#status {{ font-weight: 600; }}
         QComboBox, QDoubleSpinBox {{ background: {field}; border: 1px solid {border}; border-radius: 6px; padding: 5px 7px; min-height: 0px; }}
         QComboBox QAbstractItemView, QMenu {{ background: {panel}; color: {text}; selection-background-color: {accent}; selection-color: {on_accent}; }}
