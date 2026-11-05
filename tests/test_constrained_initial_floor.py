@@ -100,12 +100,12 @@ def test_hidden_minimum_preserves_workspace_and_restores_complete_floor(guarded_
     assert not window.isVisible() and not window.isMaximized()
     assert guard.constrained_native_maximum is verified
     assert guard.preferredMinimum.height() >= 900
-    if verified:
-        assert window.minimumSize() == case.layout.minimumSize().boundedTo(case.area[0].size())
-        assert window.minimumHeight() < case.area[0].height()
-        assert window.minimumWidth() >= case.workspace.minimumWidth()
-    else:
-        assert window.minimumSize() == guard.preferredMinimum.boundedTo(case.area[0].size())
+    # Until a native Wayland frame is exposed, both verified and fallback
+    # providers retain the exact persistent floor for compositor negotiation.
+    # Only the verified constraint is allowed to request maximization below.
+    assert window.minimumSize() == case.layout.minimumSize().boundedTo(case.area[0].size())
+    assert window.minimumHeight() < case.area[0].height()
+    assert window.minimumWidth() >= case.workspace.minimumWidth()
     assert window.font() == font and case.workspace.minimumHeight() == 120
     window.show()
     if verified:

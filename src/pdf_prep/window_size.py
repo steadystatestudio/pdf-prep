@@ -131,15 +131,30 @@ class WindowSizeGuard(QObject):
                 policy = Qt.ScrollBarPolicy.ScrollBarAlwaysOff if fits else Qt.ScrollBarPolicy.ScrollBarAsNeeded
                 self.scroll.setHorizontalScrollBarPolicy(policy)
                 self.scroll.setVerticalScrollBarPolicy(policy)
+            # Before Wayland exposes the native frame, the undecorated cap
+            # is only an upper bound. Let the compositor negotiate a persistent
+            # controls floor instead of advertising complete content plus a
+            # subsequently discovered title bar as its initial hard minimum.
+            # A missing typed hook does not discard a visible widget's measured
+            # frame. A zero frame stays unknown without the typed hook.
+            visible_widget_frame = (self._workarea.enabled and handle is None
+                                    and window.isVisible()
+                                    and (extra_w > 0 or extra_h > 0))
+            initial_frame_unknown = (available is None and self._workarea.enabled
+                                     and self._normal_frame_extra is None
+                                     and (handle is None or not handle.isExposed())
+                                     and not visible_widget_frame)
             minimum = wanted.boundedTo(cap)
             self.preferredMinimum = wanted
             normal_mode = not (window.isMaximized() or window.isFullScreen() or window.isMinimized())
             verified_area = (available is None and self._workarea.enabled
                              and self._workarea.last_details.get("source") == "x11-ewmh")
-            if normal_mode and window.isVisible() and handle is not None and handle.isExposed():
+            if normal_mode and window.isVisible() and (visible_widget_frame
+                    or (handle is not None and handle.isExposed())):
                 self._normal_frame_extra = QSize(extra_w, extra_h)
             normal_capacity = QSize(cap)
-            basis = "current-normal-frame" if normal_mode else "maximized-frame-upper-bound"
+            basis = ("unknown" if initial_frame_unknown else
+                     "current-normal-frame" if normal_mode else "maximized-frame-upper-bound")
             if not normal_mode and self._normal_frame_extra is not None:
                 normal_capacity = QSize(max(1, area.width() - self._normal_frame_extra.width()),
                                         max(1, area.height() - self._normal_frame_extra.height()))
@@ -154,7 +169,7 @@ class WindowSizeGuard(QObject):
                 preferred_minimum=list(wanted.toTuple()), client_capacity=list(normal_capacity.toTuple()),
                 capacity_basis=basis, available_geometry=list(area.getRect()),
             )
-            if compositor_fallback or self.constrained_native_maximum:
+            if initial_frame_unknown or compositor_fallback or self.constrained_native_maximum:
                 # A complete layout that cannot fit must not advertise its capped
                 # height as a hard compositor minimum, even before first map.
                 # Keep persistent controls and a useful scroll viewport instead.

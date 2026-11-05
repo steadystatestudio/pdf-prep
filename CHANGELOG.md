@@ -1,6 +1,6 @@
 # Changes
 
-## 1.2.0 — 2026-11-04
+## 1.2.1 — 2026-11-04
 
 - Open a fitted Appearance settings dialog directly, with system/custom font and accent choices and a reset to System. Linux desktop matching no longer needs system Python or PyGObject.
 - Resolve desktop preferences independently through native/portal settings, KDE or explicit qt6ct preferences, with honest readable fallbacks. Refresh preserves explicit choices.

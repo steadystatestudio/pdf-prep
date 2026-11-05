@@ -1,6 +1,6 @@
 """Staged production settings and per-application preference compatibility."""
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -21,6 +21,9 @@ def controls(tmp_path, monkeypatch):
     widget = AppearanceControls(settings, theme_key="ui/appearance")
     yield app, settings, widget
     widget.close()
+    widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()
     app.setFont(font)
 
 
@@ -80,13 +83,19 @@ def test_cancel_does_not_save_and_form_fits_without_unnecessary_scroll(controls)
     app, settings, _ = controls
     app.setFont(QFont(app.font().family(), 10))
     dialog = AppearanceSettingsDialog(settings, theme_key="ui/appearance")
-    dialog.show()
-    app.processEvents()
-    choose(dialog.controls.theme, "light")
-    assert dialog.minimumSize() == dialog.maximumSize()
-    assert dialog.scroll.verticalScrollBar().maximum() == 0
-    dialog.reject()
-    assert settings.value("ui/appearance") == "dark"
+    try:
+        dialog.show()
+        app.processEvents()
+        choose(dialog.controls.theme, "light")
+        assert dialog.minimumSize() == dialog.maximumSize()
+        assert dialog.scroll.verticalScrollBar().maximum() == 0
+        dialog.reject()
+        assert settings.value("ui/appearance") == "dark"
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        app.processEvents()
 
 
 def test_custom_size_boundaries_are_supported(controls):

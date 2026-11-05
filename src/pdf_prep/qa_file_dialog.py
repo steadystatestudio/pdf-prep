@@ -1,9 +1,10 @@
 """Inspect Qt-owned file pickers only inside explicit package QA."""
 
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings, QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QFontInfo
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -15,6 +16,83 @@ from PySide6.QtWidgets import (
 )
 
 from .desktop_geometry import available_geometry
+
+
+def _normal_picker_capacity(dialog, area):
+    """Keep the known native frame, even while QWidget's frame cache lags."""
+    from .appearance_qa import _qa_window_handle
+
+    frame = dialog.frameGeometry()
+    extra_width = max(0, frame.width() - dialog.width())
+    extra_height = max(0, frame.height() - dialog.height())
+    handle = _qa_window_handle(dialog)
+    if handle is not None:
+        native_frame = handle.frameGeometry()
+        extra_width = max(extra_width, native_frame.width() - handle.width())
+        extra_height = max(extra_height, native_frame.height() - handle.height())
+    return max(1, area.width() - extra_width), max(1, area.height() - extra_height)
+
+
+def _prepare_normal_picker(app, dialog, settle, *, timeout=5):
+    """Fit observed normal frames and acknowledge at most one unexpected Max."""
+    from .appearance_qa import _qa_window_handle, _request_qa_state
+
+    deadline = time.monotonic() + timeout
+    maximum_acknowledged = False
+    callback_errors = []
+    timer = QTimer(dialog)
+    timer.setInterval(20)
+
+    def reconcile_state():
+        nonlocal maximum_acknowledged
+        if time.monotonic() >= deadline:
+            timer.stop()
+            return
+        handle = _qa_window_handle(dialog)
+        native_state = handle.windowState() if handle is not None else None
+        observed_maximum = dialog.isMaximized() or (
+            native_state is not None and bool(native_state & Qt.WindowState.WindowMaximized))
+        if observed_maximum:
+            if not maximum_acknowledged:
+                maximum_acknowledged = True
+                _request_qa_state(dialog, False)
+            return
+        if native_state is None or not native_state:
+            area = available_geometry(dialog, dialog.screen().availableGeometry())
+            width, height = _normal_picker_capacity(dialog, area)
+            target = min(dialog.width(), width), min(dialog.height(), height)
+            if target != dialog.size().toTuple():
+                dialog.resize(*target)
+
+    def reconcile_observed_state():
+        try:
+            reconcile_state()
+        except Exception as error:
+            if not callback_errors:
+                callback_errors.append(error)
+            timer.stop()
+
+    timer.timeout.connect(reconcile_observed_state)
+    try:
+        reconcile_observed_state()
+        if callback_errors:
+            raise callback_errors[0]
+        timer.start()
+        # The existing strict settle owns the deadline/stability/font/min/frame
+        # checks; the owned timer only responds to states/frames actually seen.
+        try:
+            settle(dialog)
+        except BaseException:
+            if callback_errors:
+                raise callback_errors[0]
+            raise
+        if callback_errors:
+            raise callback_errors[0]
+        if time.monotonic() > deadline:
+            raise AssertionError("picker-normal-acknowledgement-deadline")
+    finally:
+        timer.stop()
+        timer.deleteLater()
 
 
 @contextmanager
@@ -89,11 +167,9 @@ def inspect_file_dialog(app, window, destination, surfaces, settle):
             dialog.show()
             app.processEvents()
             area = available_geometry(dialog, dialog.screen().availableGeometry())
-            frame = dialog.frameGeometry()
-            cap_width = max(1, area.width() - max(0, frame.width() - dialog.width()))
-            cap_height = max(1, area.height() - max(0, frame.height() - dialog.height()))
+            cap_width, cap_height = _normal_picker_capacity(dialog, area)
             dialog.resize(min(dialog.width(), cap_width), min(dialog.height(), cap_height))
-            settle(dialog)
+            _prepare_normal_picker(app, dialog, settle)
             assert dialog.testOption(QFileDialog.DontUseNativeDialog)
             assert Path(dialog.directory().absolutePath()).resolve() == root.resolve()
             for widget in dialog.findChildren(QWidget):

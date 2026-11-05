@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "steady-pdf-prep"
-version = "1.2.0"
+version = "1.2.1"
 description = "Prepare a PDF for an upload, locally, with a preview before saving"
 requires-python = ">=3.12"
 license = "MIT"
