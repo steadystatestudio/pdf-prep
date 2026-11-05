@@ -907,7 +907,11 @@ def main() -> int:
     app.setApplicationVersion(__version__)
     app.setOrganizationName("Steady State Studio")
     app.setStyle(FileDialogStyle())
-    window = MainWindow()
+    from .appearance import prepare_initial_appearance, prepare_window_for_show
+    settings = QSettings("Steady State Studio", "PDF Prep")
+    prepare_initial_appearance(app, settings, theme_key="appearance")
+    window = MainWindow(settings=settings)
+    prepare_window_for_show(window)
     screen = window.screen() or app.primaryScreen()
     if screen is not None and not (window.isMaximized() or window.isFullScreen() or window.isMinimized()):
         area = available_geometry(window, screen.availableGeometry())

@@ -44,7 +44,7 @@ jobs:
       - name: Check the release source
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q --junitxml=artifacts/source-tests.xml
+        run: python -m pytest -q --basetemp="${{ runner.temp }}/pdf-${{ github.run_id }}-${{ github.run_attempt }}" --junitxml=artifacts/source-tests.xml
       - name: Fetch verified AppImage build tools
         run: python scripts/fetch_appimagetool.py
       - name: Build the portable archive and AppImage
@@ -62,6 +62,7 @@ jobs:
           name: pdf-prep-linux
           compression-level: 0
           if-no-files-found: error
+          retention-days: 2
           path: |
             dist/PDF-Prep-linux-x86_64.tar.gz
             dist/PDF-Prep-x86_64.AppImage
@@ -70,14 +71,19 @@ jobs:
             dist/PDF-Prep/LINUX-SYSTEM-DEPENDENCIES.json
             artifacts/source-tests.xml
             artifacts/ubuntu22-*.json
-            artifacts/*-artifacts/**
+            artifacts/*-artifacts/**/*.json
+            artifacts/*-artifacts/**/*.png
       - name: Retain diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: linux-build-diagnostics
+          retention-days: 2
           path: |
-            artifacts/
+            artifacts/source-tests.xml
+            artifacts/ubuntu22-*.json
+            artifacts/*-artifacts/**/*.json
+            artifacts/*-artifacts/**/*.png
             build/pyinstaller/PDF-Prep/warn-PDF-Prep.txt
 
   compatibility:
@@ -117,14 +123,18 @@ jobs:
         with:
           name: pdf-prep-linux-ubuntu24
           if-no-files-found: error
+          retention-days: 2
           path: |
             candidate/ubuntu24-*.json
-            candidate/*-artifacts/**
+            candidate/*-artifacts/**/*.json
+            candidate/*-artifacts/**/*.png
       - name: Retain diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: linux-compatibility-diagnostics
+          retention-days: 2
           path: |
             candidate/ubuntu24-*.json
-            candidate/*-artifacts/**
+            candidate/*-artifacts/**/*.json
+            candidate/*-artifacts/**/*.png

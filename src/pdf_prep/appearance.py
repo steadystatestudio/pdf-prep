@@ -571,6 +571,75 @@ def appearance_probes_pending(app):
     return "gtk" not in providers or "portal" not in providers or workarea_probes_pending(app)
 
 
+def prepare_initial_appearance(app, settings, *, theme_key=None, timeout_ms=5000):
+    """Resolve initial metrics before constructing UI or scheduling file workflows.
+
+    This bounded event loop belongs before the MainWindow factory. Later refreshes
+    retain the normal asynchronous behavior and never repeat the startup wait.
+    """
+    from PySide6.QtCore import QEventLoop
+
+    from .desktop_geometry import workarea_provider
+
+    configure_appearance(app, settings, theme_key=theme_key)
+    workarea_provider(app)
+    previous = getattr(app, "_studio_initial_appearance_result", None)
+    if previous is not None:
+        return dict(previous)
+    limit = max(1, min(5000, int(timeout_ms)))
+    if appearance_probes_pending(app):
+        loop = QEventLoop(app)
+        poll = QTimer(app)
+        deadline = QTimer(app)
+        poll.setInterval(10)
+        deadline.setSingleShot(True)
+
+        def check():
+            if not appearance_probes_pending(app):
+                loop.quit()
+
+        poll.timeout.connect(check)
+        deadline.timeout.connect(loop.quit)
+        app.aboutToQuit.connect(loop.quit)
+        poll.start()
+        deadline.start(limit)
+        try:
+            loop.exec()
+        finally:
+            poll.stop()
+            deadline.stop()
+            app.aboutToQuit.disconnect(loop.quit)
+            poll.deleteLater()
+            deadline.deleteLater()
+            loop.deleteLater()
+    pending = appearance_probes_pending(app)
+    result = dict(ready=not pending, reason="initial-providers-pending-at-deadline" if pending
+                  else "initial-providers-resolved", deadline_ms=limit)
+    app._studio_initial_appearance_result = result
+    return dict(result)
+
+
+def prepare_window_for_show(window, layout_callback=None):
+    """Polish and fit synchronously; queued recovery/load callbacks run after show."""
+    from PySide6.QtWidgets import QApplication
+
+    from .system_fonts import polish_system_text
+
+    window.ensurePolished()
+    polish_system_text(QApplication.instance())
+    for _ in range(3):
+        if layout_callback is not None:
+            layout_callback()
+        central = window.centralWidget()
+        if central is not None and central.layout() is not None:
+            central.layout().activate()
+        if window.layout() is not None:
+            window.layout().activate()
+        guard = getattr(window, "window_size_guard", None)
+        if guard is not None:
+            guard.update()
+
+
 def appearance_details(app):
     """Copyable, content-free diagnostics; never serialize paths or raw exceptions."""
     from . import __version__
@@ -607,6 +676,7 @@ def appearance_details(app):
                               "pixel_size": actual.pixelSize(), "exact_match": actual.exactMatch()},
               "properties": resolution,
               "work_area": workarea_details(app),
+              "initial_appearance": getattr(app, "_studio_initial_appearance_result", None),
               "scaling": {"qt_logical_dpi": screen.logicalDotsPerInchY() if screen else None,
                           "qt_device_scale": screen.devicePixelRatio() if screen else None,
                           "explicit_qt_display_scale": explicit_display_scale(screen.name() if screen else ""),

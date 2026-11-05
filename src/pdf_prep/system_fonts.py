@@ -278,7 +278,7 @@ def accent_colors(app: QApplication) -> dict[str, str]:
 def accent_text(app: QApplication, background: str) -> str:
     color = QColor(accent_colors(app)["accent"])
     for _ in range(80):
-        if contrast_ratio(color, background) >= 4.5:
+        if contrast_ratio(QColor(color.name()), background) >= 4.5:
             return color.name()
         color = color.lighter(108) if _luminance(QColor(background)) < 0.4 else color.darker(108)
     return contrast_text(background)

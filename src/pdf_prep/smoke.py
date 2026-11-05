@@ -138,6 +138,23 @@ def _settle_minimum_geometry(app, window, timeout=5, stable_interval=0.1):
                          + json.dumps(_minimum_geometry_facts(window), sort_keys=True))
 
 
+def _validate_minimum_geometry(window, facts):
+    """The workflow must preserve the helper's explicit normal/maximized mode."""
+    mode = facts.get('geometry_mode')
+    if mode == 'exact-normal-minimum':
+        assert window.size() == window.minimumSize(), facts
+        return
+    assert mode == 'validated-constrained-maximized', facts
+    constraint = facts.get('geometry_constraint', {})
+    preferred, capacity = constraint.get('preferred_minimum', []), constraint.get('client_capacity', [])
+    assert facts.get('constrained_native_maximum') and constraint.get('source') == 'x11-ewmh', facts
+    assert constraint.get('reason') == 'preferred-minimum-exceeds-validated-workarea', facts
+    assert len(preferred) == len(capacity) == 2, facts
+    assert any(wanted > limit for wanted, limit in zip(preferred, capacity)), facts
+    assert window.isMaximized() and not window.isMinimized() and not window.isFullScreen(), facts
+    assert window.width() >= window.minimumWidth() and window.height() >= window.minimumHeight(), facts
+
+
 def main(report: Path) -> int:
     report = report.absolute()
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -266,7 +283,10 @@ def main(report: Path) -> int:
             settings = QSettings(str(work / 'preferences.ini'), QSettings.Format.IniFormat)
             settings.setFallbacksEnabled(False)
             settings.setValue('appearance', 'light')
+            from .appearance import prepare_initial_appearance, prepare_window_for_show
+            prepare_initial_appearance(app, settings, theme_key='appearance')
             window = MainWindow(settings=settings)
+            prepare_window_for_show(window)
             window.show()
 
             def idle():
@@ -328,7 +348,7 @@ def main(report: Path) -> int:
             capture_appearance(app, window, artifacts)
             idle()
             minimum_geometry = _settle_minimum_geometry(app, window)
-            assert window.size() == window.minimumSize(), _minimum_geometry_facts(window)
+            _validate_minimum_geometry(window, minimum_geometry)
             retain('narrow-geometry.json', json.dumps(minimum_geometry, indent=2).encode('utf-8'))
             screenshot('narrow-dark.png')
             for button in (window.add_button, window.prepare_button, window.save_button, window.cancel_button):

@@ -77,6 +77,7 @@ def source_hashes(root: Path) -> dict[str, str]:
         paths.extend((root / directory).rglob("*"))
     for item in sorted(set(paths)):
         if (item.is_file() and not item.is_symlink() and "__pycache__" not in item.parts
+                and not any(part.endswith(".egg-info") for part in item.relative_to(root).parts)
                 and item.suffix not in (".pyc", ".pyo")):
             hashes[item.relative_to(root).as_posix()] = hashlib.sha256(item.read_bytes()).hexdigest()
     return hashes
