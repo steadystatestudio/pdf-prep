@@ -23,6 +23,7 @@ import fetch_appimagetool as appimage_inputs
 ROOT = Path(__file__).resolve().parents[1]
 NAME = "PDF-Prep"
 LICENSE_PACKAGES = ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
+                    "PySide6_WebEngine", "PySide6_Pdf",
                     "Pillow", "pypdf", "pypdfium2", "PyInstaller")
 
 
@@ -46,7 +47,7 @@ def pyinstaller_environment(target_platform: str) -> dict[str, str]:
 
 
 def verify_qt_subset(bundle: Path) -> None:
-    excluded = ("qt6pdf", "qt6virtualkeyboard", "qt6qml", "qt6quick", "qt6webengine", "qt6network")
+    excluded = ("qt6pdf", "qt6virtualkeyboard", "qt6qml", "qt6quick", "qt6webengine", "qtwebengineprocess", "qt6network")
     for path in (bundle / "_internal").rglob("*"):
         name = path.name.lower().removeprefix("lib")
         if path.is_file() and (name.startswith(excluded) or name == "opengl32sw.dll"
@@ -100,6 +101,11 @@ def copy_notices(root: Path, package: Path, target_platform: str) -> None:
                 destination = licenses / name / rel.split(".dist-info/licenses/", 1)[1]
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(distribution.locate_file(item), destination)
+    bindings = source_index["binding_versions"]
+    if (set(bindings) != {"PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
+                         "PySide6_WebEngine", "PySide6_Pdf"}
+            or any(versions.get(name) != expected for name, expected in bindings.items())):
+        raise RuntimeError("Qt Python distribution versions differ from the matching-source pins")
     shutil.copytree(root / "packaging/licenses", licenses, dirs_exist_ok=True)
     (licenses / "Python").mkdir(exist_ok=True)
     shutil.copyfile(python_license(), licenses / "Python/LICENSE.txt")

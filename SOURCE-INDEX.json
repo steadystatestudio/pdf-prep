@@ -1,30 +1,33 @@
 {
-  "qt_version": "6.11.2",
-  "verified_on": "2026-11-01",
+  "qt_version": "6.12.0",
+  "verified_on": "2026-11-04",
   "archives": [
     {
-      "name": "qt-everywhere-src-6.11.2.tar.xz",
+      "name": "qt-everywhere-src-6.12.0.tar.xz",
       "covers": [
         "Qt",
         "Qt bundled third-party components"
       ],
-      "url": "https://download.qt.io/official_releases/qt/6.11/6.11.2/single/qt-everywhere-src-6.11.2.tar.xz",
-      "sha256": "6dcfbca271d76a6502741a2c0dc6fc98ef7dd0b7b4cfd0abcebb285a86a26f33",
-      "size": 1019661552,
+      "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz",
+      "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
+      "size": 443394020,
       "license": "Per-module LICENSES and third-party notices in the complete source archive; LGPLv3 alternative for the dynamically linked application modules"
     },
     {
-      "name": "pyside-setup-everywhere-src-6.11.2.tar.xz",
+      "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
       "covers": [
         "PySide6",
         "PySide6_Essentials",
         "PySide6_Addons",
-        "shiboken6"
+        "shiboken6",
+        "PySide6_WebEngine",
+        "PySide6_Pdf"
       ],
-      "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.11.2-src/pyside-setup-everywhere-src-6.11.2.tar.xz",
-      "sha256": "cba47efbaad1bedd529725cbc14e21f156c7a19366f07b3edfbb076ffd7afdf8",
-      "size": 18053248,
-      "license": "LGPL-3.0-only alternative; includes PySide and Shiboken source, build scripts and LICENSES"
+      "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+      "size": 18211772,
+      "license": "LGPL-3.0-only alternative; includes PySide and Shiboken source, build scripts and LICENSES",
+      "evidence": "Matches official upstream SHA256 and Metalink metadata over HTTPS"
     },
     {
       "name": "type2-runtime-dd6cebedcbddde9c82f89b011e8e1d40b6e43868.tar.gz",
@@ -57,5 +60,13 @@
       "size": 75404,
       "license": "BSD-2-Clause; see archive LICENSE"
     }
-  ]
+  ],
+  "binding_versions": {
+    "PySide6": "6.12.0",
+    "PySide6_Essentials": "6.12.0",
+    "PySide6_Addons": "6.12.0",
+    "shiboken6": "6.12.0",
+    "PySide6_WebEngine": "6.12.0.140",
+    "PySide6_Pdf": "6.12.0.140"
+  }
 }

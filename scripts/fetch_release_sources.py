@@ -21,8 +21,14 @@ def digest(path):
 def source_index(root=ROOT):
     index = json.loads((root / "SOURCE-INDEX.json").read_text(encoding="utf-8"))
     lock = (root / "requirements-build.txt").read_text(encoding="utf-8")
-    for name in ("PySide6", "shiboken6"):
-        if not re.search(rf"(?mi)^{name}=={re.escape(index['qt_version'])}$", lock):
+    versions = index["binding_versions"]
+    if (set(versions) != {"PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6",
+                         "PySide6_WebEngine", "PySide6_Pdf"}
+            or any(versions[name] != index["qt_version"] for name in
+                   ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6"))):
+        raise ValueError("Matching-source binding version inventory is incomplete")
+    for name, version in versions.items():
+        if not re.search(rf"(?mi)^{name}=={re.escape(version)}$", lock):
             raise ValueError("Matching sources differ from the dependency pins")
     prefixes = ("https://download.qt.io/official_releases/", "https://codeload.github.com/AppImage/type2-runtime/", "https://codeload.github.com/vasi/squashfuse/", "https://github.com/libfuse/libfuse/releases/download/")
     for item in index["archives"]:

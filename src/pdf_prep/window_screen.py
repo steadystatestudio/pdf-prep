@@ -106,7 +106,7 @@ class WindowScreenObserver(QObject):
             self._attempts = 0
             self.retry_timer.start(0)
             self._changed()
-        elif kind in {QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.DevicePixelRatioChange,
+        elif kind in {QEvent.Type.Move, QEvent.Type.DevicePixelRatioChange,
                       QEvent.Type.WindowStateChange}:
             self._changed()
         return False

@@ -42,14 +42,16 @@ def test_reviewed_source_requires_exact_commit_and_both_studio_identities(monkey
 def test_package_provenance_checks_both_source_ids_and_all_bindings():
     info = {"product": "PDF Prep", "version": __version__, "source_commit": "a" * 40,
             "source_tree": "b" * 40, "platform": "linux",
-            "dependencies": {name: "6.11.2" for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6")}}
+            "dependencies": dict(sources.source_index()["binding_versions"])}
     release.check_info(info, "a" * 40, "b" * 40, "linux")
     for field, value in (("source_commit", "c" * 40), ("source_tree", None), ("platform", "win32"), ("version", "1.0.0")):
         with pytest.raises(ValueError, match="provenance"):
             release.check_info({**info, field: value}, "a" * 40, "b" * 40, "linux")
-    info["dependencies"]["PySide6_Addons"] = "6.11.0"
-    with pytest.raises(ValueError, match="provenance"):
-        release.check_info(info, "a" * 40, "b" * 40, "linux")
+    for name in info["dependencies"]:
+        for mutation in ("wrong-version", None):
+            changed = {**info, "dependencies": {**info["dependencies"], name: mutation}}
+            with pytest.raises(ValueError, match="provenance"):
+                release.check_info(changed, "a" * 40, "b" * 40, "linux")
 
 
 def test_wrong_run_missing_sources_or_extra_assets_cannot_pass_receipt(monkeypatch):
@@ -82,10 +84,22 @@ def test_bad_source_download_cannot_replace_existing_file(tmp_path, monkeypatch)
 
 def test_matching_sources_and_manual_workflow_keep_publication_separate():
     index = sources.source_index()
-    assert index["qt_version"] == "6.11.2" and len(index["archives"]) == 5
+    assert index["qt_version"] == "6.12.0" and len(index["archives"]) == 5
     workflow = (ROOT / ".github/workflows/build-release.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow and "expected_commit:" in workflow
     assert "pdf-prep-builds" in workflow and "refs/heads/main" in workflow
     assert "needs: [prepare, build, sources, compatibility]" in workflow
     assert "release_validation.py finalize" in workflow
     assert "gh release" not in workflow and "contents: write" not in workflow
+
+
+def test_matching_source_gate_rejects_missing_or_mispaired_split_sdk_pins(tmp_path):
+    index = sources.source_index()
+    (tmp_path / "SOURCE-INDEX.json").write_text(json.dumps(index), encoding="utf-8")
+    original = (ROOT / "requirements-build.txt").read_text(encoding="utf-8")
+    for name, version in index["binding_versions"].items():
+        for replacement in ("", name + "==6.11.2"):
+            (tmp_path / "requirements-build.txt").write_text(
+                original.replace(name + "==" + version, replacement), encoding="utf-8")
+            with pytest.raises(ValueError, match="dependency pins"):
+                sources.source_index(tmp_path)

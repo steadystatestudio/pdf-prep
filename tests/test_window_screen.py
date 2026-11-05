@@ -224,3 +224,32 @@ print(json.dumps(bad))
     result = subprocess.run([sys.executable, "-c", script, PACKAGE + ".window_screen"],
                             env=environment, capture_output=True, text=True, timeout=30, check=False)
     _assert_reuse_probe_result(result)
+
+
+@pytest.mark.parametrize("native_available", [True, False])
+def test_client_resize_is_not_a_screen_change_but_move_still_notifies(app, monkeypatch, native_available):
+    window = QWidget()
+    child = QWidget()
+    wrong = QWidgetItem(child)
+    calls = []
+    try:
+        window.show()
+        QTest.qWait(20)
+        if not native_available:
+            monkeypatch.setattr(window, "windowHandle", lambda: wrong)
+        HOOKS.observe_window_screen(window, lambda: calls.append(True))
+        QTest.qWait(180)
+        observer = window._studio_screen_observer
+        assert (observer.details["state"] == "connected") is native_available
+        observer.change_timer.stop()
+        calls.clear()
+        window.resize(window.width() + 20, window.height() + 10)
+        QTest.qWait(30)
+        assert calls == [], "An ordinary client resize must preserve editor sizing semantics"
+        window.move(window.x() + 12, window.y() + 12)
+        QTest.qWait(30)
+        assert calls, "Monitor fitting must remain available through widget movement"
+    finally:
+        dispose(window)
+        wrong = None
+        dispose(child)

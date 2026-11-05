@@ -115,8 +115,12 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
             and not workarea_probes_pending(app)
             and (window.isMaximized() if mode == "constrained-native-max" else not normal or not window.isMaximized())
             and (native_state is None or bool(native_state & Qt.WindowState.WindowMaximized) == window.isMaximized())
-            and (native_state is None or not normal or mode == "constrained-native-max"
-                 or not native_state & (Qt.WindowState.WindowMaximized | Qt.WindowState.WindowMinimized | Qt.WindowState.WindowFullScreen))
+            and (
+                native_state is None or not normal or mode == "constrained-native-max"
+                or not native_state & (
+                    Qt.WindowState.WindowMaximized | Qt.WindowState.WindowMinimized | Qt.WindowState.WindowFullScreen
+                )
+            )
             and window.width() >= window.minimumWidth()
             and window.height() >= window.minimumHeight()
             and frame.width() <= area.width() + 2

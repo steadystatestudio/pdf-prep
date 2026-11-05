@@ -16,7 +16,7 @@ a = Analysis(
     hookspath=[str(root / 'packaging/hooks')],
     excludes=['PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets',
               'PySide6.QtWebEngineQuick', 'PySide6.QtQml', 'PySide6.QtQuick',
-              'PySide6.QtPdf', 'PySide6.QtNetwork', 'tkinter', 'pytest', 'reportlab'],
+              'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtNetwork', 'tkinter', 'pytest', 'reportlab'],
     noarchive=False,
 )
 if sys.platform == 'linux':

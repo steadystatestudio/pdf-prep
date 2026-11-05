@@ -61,8 +61,8 @@ def check_info(info, commit, tree, platform):
     if (info.get("product") != "PDF Prep" or info.get("version") != version
             or info.get("source_commit") != commit or info.get("source_tree") != tree
             or info.get("platform") != platform
-            or any(info.get("dependencies", {}).get(name) != source_index()["qt_version"]
-                   for name in ("PySide6", "PySide6_Essentials", "PySide6_Addons", "shiboken6"))):
+            or any(info.get("dependencies", {}).get(name) != expected
+                   for name, expected in source_index()["binding_versions"].items())):
         raise ValueError("Package provenance differs from the reviewed source")
 
 

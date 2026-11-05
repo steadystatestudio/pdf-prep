@@ -9,7 +9,7 @@ description = "Prepare a PDF for an upload, locally, with a preview before savin
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{name = "Steady State Studio"}]
-dependencies = ["PySide6==6.11.2", "pypdf==6.19.0", "Pillow==12.3.0", "pypdfium2==5.14.0"]
+dependencies = ["PySide6==6.12.0", "pypdf==6.19.0", "Pillow==12.3.0", "pypdfium2==5.14.0"]
 
 [project.urls]
 Homepage = "https://steady-state-studio.com/apps/pdf-prep/"

@@ -67,7 +67,9 @@ def test_genuinely_constrained_native_maximum_is_not_forced_normal(monkeypatch):
     window = WidgetState(None)
     window.window_size_guard = SimpleNamespace(constrained_native_maximum=True,
         geometry_constraint={"source": "x11-ewmh"})
-    monkeypatch.setattr(QA, "_settle_geometry", lambda *args, **kwargs: pytest.fail("Constrained maximum must stay native"))
+    monkeypatch.setattr(
+        QA, "_settle_geometry", lambda *args, **kwargs: pytest.fail("Constrained maximum must stay native")
+    )
     QA._prepare_qa_normal_state(None, window)
     assert window.requests == []
 

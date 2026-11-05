@@ -41,13 +41,15 @@ def test_python_notice_follows_build_interpreter(tmp_path, monkeypatch):
     assert build.python_license() == preferred
 
 
-def test_native_build_rejects_wrong_qt_modules(tmp_path):
+@pytest.mark.parametrize("filename", ["libQt6Pdf.so.6", "Qt6PdfWidgets.dll",
+                                      "QtWebEngineProcess.exe", "libQt6WebEngineCore.so.6"])
+def test_native_build_rejects_wrong_qt_modules(tmp_path, filename):
     native = tmp_path / "_internal/PySide6"
     native.mkdir(parents=True)
     (native / "Qt6Core.dll").write_bytes(b"needed")
     (native / "pdfium.dll").write_bytes(b"needed-independent-renderer")
     build.verify_qt_subset(tmp_path)
-    forbidden = native / "libQt6Pdf.so.6"
+    forbidden = native / filename
     forbidden.write_bytes(b"unreviewed")
     with pytest.raises(RuntimeError, match="optional Qt"):
         build.verify_qt_subset(tmp_path)
