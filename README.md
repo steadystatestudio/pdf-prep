@@ -63,6 +63,6 @@ The build produces a portable archive and an AppImage. `python scripts/build.py 
 [Studio website](https://steady-state-studio.com/) · [Ideas and feedback](https://steady-state-studio.com/contact/) · [Optional support](https://ko-fi.com/steadystatestudio)
 
 
-Native packages are built and tested privately from the release's published source commit. Public releases retain the package checksums, build and platform receipts, matching dependency sources and synthetic QA; private build logs are not linked as public evidence.
+Native packages are built and tested privately from the release's published source commit. Public releases retain package checksums, build and platform receipts, and matching dependency sources. Detailed native QA and build logs are retained privately.
 
 See [Desktop appearance](docs/APPEARANCE.md) for system fonts, accents, scaling and restart behavior.

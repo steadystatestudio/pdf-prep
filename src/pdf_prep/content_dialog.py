@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QFrame, Q
 
 from .system_fonts import ui_html
 from .desktop_geometry import available_geometry, workarea_provider
+from .window_screen import observe_window_screen
 
 
 class TextContentDialog(QDialog):
@@ -60,10 +61,7 @@ class TextContentDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        handle = self.windowHandle()
-        if handle is not None and handle is not getattr(self, "_workarea_handle", None):
-            handle.screenChanged.connect(self._screen_changed)
-            self._workarea_handle = handle
+        observe_window_screen(self, self._screen_changed)
         self._screen_changed()
         self.fit_to_screen()
 

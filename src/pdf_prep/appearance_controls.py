@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .window_screen import observe_window_screen
+
 
 class AppearanceControls(QWidget):
     """Stage choices until save_settings(); Refresh never clears staged inputs."""
@@ -174,10 +176,7 @@ class _FittedDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        handle = self.windowHandle()
-        if handle is not None and handle is not getattr(self, "_workarea_handle", None):
-            handle.screenChanged.connect(self._screen_changed)
-            self._workarea_handle = handle
+        observe_window_screen(self, self._screen_changed)
         self._screen_changed()
         self.fit_to_screen()
 

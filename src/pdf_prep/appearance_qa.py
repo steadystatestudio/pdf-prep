@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -28,6 +28,7 @@ from .appearance import (
 from .desktop_geometry import available_geometry, workarea_probes_pending
 from .qa_file_dialog import inspect_file_dialog
 from .system_fonts import polish_system_text
+from .window_screen import _valid_window
 
 
 def _geometry_mode(window):
@@ -37,6 +38,43 @@ def _geometry_mode(window):
     if constrained:
         assert details.get("source") == "x11-ewmh", "Unverified constrained window mode"
     return ("constrained-native-max" if constrained else "normal"), details
+
+
+def _qa_window_handle(window):
+    try:
+        handle = window.windowHandle()
+    except RuntimeError:
+        return None
+    return handle if _valid_window(handle) else None
+
+
+def _request_qa_state(window, maximized):
+    """Synchronize the QWidget and verified QWindow before testing geometry."""
+    method = "showMaximized" if maximized else "showNormal"
+    getattr(window, method)()
+    handle = _qa_window_handle(window)
+    if handle is not None:
+        getattr(handle, method)()
+
+
+def _prepare_qa_normal_state(app, window):
+    if _geometry_mode(window)[0] != "normal":
+        return
+    # QWidget can already report Normal while its QWindow and the real X11 WM
+    # remain maximized. A bounded explicit transition repairs that precondition;
+    # it does not assist subsequent minimum-size or persistent-control checks.
+    _request_qa_state(window, True)
+    _settle_geometry(app, window, normal=False)
+    if _geometry_mode(window)[0] == "normal":
+        _request_qa_state(window, False)
+        _settle_geometry(app, window)
+
+
+def _qa_resize_request(window, width, area):
+    frame = window.frameGeometry()
+    capacity_width = max(1, area.width() - max(0, frame.width() - window.width()))
+    capacity_height = max(1, area.height() - max(0, frame.height() - window.height()))
+    return min(width, capacity_width), min(800, capacity_height)
 
 
 def _settle_geometry(app, window, *, normal=True, timeout=5):
@@ -50,11 +88,11 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
         mode, _ = _geometry_mode(window)
         desired_state = "max" if mode == "constrained-native-max" else "normal" if normal else None
         if desired_state != requested_state:
-            if desired_state == "max" and not window.isMaximized():
-                window.showMaximized()
-            elif desired_state == "normal" and window.isMaximized():
-                window.showNormal()
+            if desired_state is not None:
+                _request_qa_state(window, desired_state == "max")
             requested_state = desired_state
+        handle = _qa_window_handle(window)
+        native_state = handle.windowState() if handle is not None else None
         frame = window.frameGeometry()
         row = getattr(window, "action_row", None)
         signature = (
@@ -64,6 +102,7 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
             area.getRect(),
             window.fontInfo().pixelSize(),
             window.isMaximized(),
+            str(native_state) if native_state is not None else "unavailable",
             mode,
             None if row is None else (row.height(), row.minimumSizeHint().toTuple()),
         )
@@ -75,6 +114,9 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
             not appearance_probes_pending(app)
             and not workarea_probes_pending(app)
             and (window.isMaximized() if mode == "constrained-native-max" else not normal or not window.isMaximized())
+            and (native_state is None or bool(native_state & Qt.WindowState.WindowMaximized) == window.isMaximized())
+            and (native_state is None or not normal or mode == "constrained-native-max"
+                 or not native_state & (Qt.WindowState.WindowMaximized | Qt.WindowState.WindowMinimized | Qt.WindowState.WindowFullScreen))
             and window.width() >= window.minimumWidth()
             and window.height() >= window.minimumHeight()
             and frame.width() <= area.width() + 2
@@ -217,6 +259,7 @@ def capture_appearance(app, window, destination):
             settle()
             assert abs(app.font().pointSizeF() - points) < 0.01, "Requested QA font was not applied"
             polish_system_text(app)
+            _prepare_qa_normal_state(app, window)
             widgets = []
             for widget in window.findChildren(QWidget):
                 if not isinstance(widget, surfaces) or widget.property("studioContentTypography"):
@@ -229,9 +272,11 @@ def capture_appearance(app, window, destination):
             for width in (1280, 960, 820, 1):
                 mode, _ = _geometry_mode(window)
                 area = available_geometry(window, window.screen().availableGeometry())
+                applied_request = None
                 if mode == "normal":
-                    window.showNormal()
-                    window.resize(width, min(800, area.height() - 50))
+                    _request_qa_state(window, False)
+                    applied_request = _qa_resize_request(window, width, area)
+                    window.resize(*applied_request)
                 settle()
                 mode, constraint = _geometry_mode(window)
                 if width == 1 and mode == "normal" and window.width() != window.minimumWidth():
@@ -267,6 +312,7 @@ def capture_appearance(app, window, destination):
                     {
                         "font_case": label,
                         "requested_width": width,
+                        "applied_resize_request": applied_request,
                         "size": window.size().toTuple(),
                         "minimum": window.minimumSize().toTuple(),
                         "font": window.font().toString(),
