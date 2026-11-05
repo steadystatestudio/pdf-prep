@@ -77,6 +77,15 @@ def _qa_resize_request(window, width, area):
     return min(width, capacity_width), min(800, capacity_height)
 
 
+def _qa_footprint_fits(window, frame, area, *, intermediate_maximum=False):
+    if intermediate_maximum:
+        # Windows keeps invisible resize borders outside the work area while
+        # maximized. This transition checks the client before returning Normal;
+        # all final normal/constrained geometry checks still use the full frame.
+        return window.width() <= area.width() + 2 and window.height() <= area.height() + 2
+    return frame.width() <= area.width() + 2 and frame.height() <= area.height() + 2
+
+
 def _settle_geometry(app, window, *, normal=True, timeout=5):
     """Wait for strict geometry invariants and native configure acknowledgements."""
     deadline = time.monotonic() + timeout
@@ -86,7 +95,7 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
         raw = window.screen().availableGeometry()
         area = available_geometry(window, raw)
         mode, _ = _geometry_mode(window)
-        desired_state = "max" if mode == "constrained-native-max" else "normal" if normal else None
+        desired_state = "max" if mode == "constrained-native-max" or not normal else "normal"
         if desired_state != requested_state:
             if desired_state is not None:
                 _request_qa_state(window, desired_state == "max")
@@ -113,7 +122,7 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
         valid = (
             not appearance_probes_pending(app)
             and not workarea_probes_pending(app)
-            and (window.isMaximized() if mode == "constrained-native-max" else not normal or not window.isMaximized())
+            and window.isMaximized() == (mode == "constrained-native-max" or not normal)
             and (native_state is None or bool(native_state & Qt.WindowState.WindowMaximized) == window.isMaximized())
             and (
                 native_state is None or not normal or mode == "constrained-native-max"
@@ -123,8 +132,8 @@ def _settle_geometry(app, window, *, normal=True, timeout=5):
             )
             and window.width() >= window.minimumWidth()
             and window.height() >= window.minimumHeight()
-            and frame.width() <= area.width() + 2
-            and frame.height() <= area.height() + 2
+            and _qa_footprint_fits(window, frame, area,
+                                  intermediate_maximum=not normal and mode == "normal")
             and not any(timer and timer.isActive() for timer in timers)
             and (row is None or row.height() == row.height_for_width(row.width()))
         )
