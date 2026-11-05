@@ -73,6 +73,57 @@ def test_native_output_escapes_desktop_strings(compiler, tmp_path):
     assert record["font_dpi"] == 144 and record["widget_scale"] == 2
 
 
+@pytest.mark.parametrize("library,arguments,failure", [
+    ("libgtk-3.so.0", [], "gtk-api-unavailable"),
+    ("libX11.so.6", ["--workarea"], "x11-api-unavailable"),
+])
+def test_host_library_stdout_cannot_corrupt_json_protocol(compiler, tmp_path, library, arguments, failure):
+    """Actual dlopen constructors exercise stdio and raw descriptor writes."""
+    noisy = tmp_path / "noisy-host-library.c"
+    noisy.write_text(
+        '#include <stdio.h>\n#include <unistd.h>\n'
+        '__attribute__((constructor)) static void host_warning(void) {\n'
+        'fputs("host-library-stdio-warning\\n", stdout); fflush(stdout);\n'
+        'const char warning[] = "host-library-descriptor-warning\\n";\n'
+        'if (write(STDOUT_FILENO, warning, sizeof(warning)-1) < 0) _exit(3); }\n',
+        encoding="utf-8",
+    )
+    subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC",
+                    str(noisy), "-o", str(tmp_path / library)], check=True)
+    executable = tmp_path / "appearance-probe"
+    subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", str(SOURCE),
+                    "-ldl", "-o", str(executable)], check=True)
+    environment = dict(os.environ, LD_LIBRARY_PATH=str(tmp_path), PATH="")
+    environment.pop("LD_PRELOAD", None)
+    result = subprocess.run([str(executable), *arguments], env=environment, capture_output=True,
+                            text=True, timeout=2)
+    assert result.returncode == 0
+    record = json.loads(result.stdout)
+    assert record["schema"] == 1 and failure in record["errors"]
+    assert result.stdout.count("\n") == 1 and len(result.stdout.encode()) < 16384
+    assert "host-library-stdio-warning" in result.stderr
+    assert "host-library-descriptor-warning" in result.stderr
+
+
+def test_protocol_descriptor_failure_exits_without_host_library_io(compiler, tmp_path):
+    harness = tmp_path / "descriptor-failure.c"
+    harness.write_text(
+        '#define dup appearance_test_dup\n#define main appearance_probe_main\n'
+        f'#include "{SOURCE.as_posix()}"\n'
+        '#undef main\n#undef dup\n'
+        'int appearance_test_dup(int descriptor) { (void)descriptor; return -1; }\n'
+        'int main(void) { char *arguments[] = {"appearance-probe", NULL};\n'
+        'return appearance_probe_main(1, arguments); }\n',
+        encoding="utf-8",
+    )
+    executable = tmp_path / "descriptor-failure"
+    subprocess.run([compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", str(harness),
+                    "-ldl", "-o", str(executable)], check=True)
+    result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=2)
+    assert result.returncode != 0
+    assert result.stdout == ""
+
+
 @pytest.mark.parametrize("background,foreground,scheme", [
     ("rgba(46,46,51,0.999)", "rgba(255,255,255,0.87)", "dark"),
     ("rgba(244,244,244,0.999)", "rgba(0,0,0,0.87)", "light"),
@@ -108,7 +159,9 @@ def test_actual_window_css_controls_scheme_without_theme_name_inference(
     )
     executable = tmp_path / "window-css"
     subprocess.run([compiler, "-std=c11", str(harness), "-ldl", "-o", str(executable)], check=True)
-    environment = dict(os.environ, GDK_BACKEND="x11")
+    # This harness initializes GTK before entering probe main; its CSS check
+    # needs no accessibility connection or pre-main host diagnostic chatter.
+    environment = dict(os.environ, GDK_BACKEND="x11", NO_AT_BRIDGE="1")
     environment.pop("GTK_THEME", None)
     result = subprocess.run([xvfb, "-a", str(executable)], env=environment, capture_output=True,
                             text=True, timeout=10)

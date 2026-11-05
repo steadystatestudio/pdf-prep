@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /* SPDX-License-Identifier: MIT
  * Read-only desktop appearance probe. This is deliberately a separate native
  * process: it never loads host GTK into the app's bundled Qt/Python process.
@@ -9,6 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+/* Host libraries may write to stdout, including from dlopen constructors.
+ * Keep machine JSON on its original descriptor and send library chatter to
+ * stderr. Tests that exercise serializers directly need no protocol setup. */
+static FILE *json_output;
+static FILE *json_stream(void) { return json_output ? json_output : stdout; }
 
 typedef struct { double red, green, blue, alpha; } Rgba;
 typedef struct {
@@ -27,23 +35,23 @@ static void error(const char *code) {
 }
 
 static void json_string(const char *value) {
-    if (!value) { fputs("null", stdout); return; }
-    putchar('"');
+    if (!value) { fputs("null", json_stream()); return; }
+    fputc('"', json_stream());
     for (const unsigned char *p = (const unsigned char *)value; *p; ++p) {
         switch (*p) {
-        case '"': fputs("\\\"", stdout); break;
-        case '\\': fputs("\\\\", stdout); break;
-        case '\b': fputs("\\b", stdout); break;
-        case '\f': fputs("\\f", stdout); break;
-        case '\n': fputs("\\n", stdout); break;
-        case '\r': fputs("\\r", stdout); break;
-        case '\t': fputs("\\t", stdout); break;
+        case '"': fputs("\\\"", json_stream()); break;
+        case '\\': fputs("\\\\", json_stream()); break;
+        case '\b': fputs("\\b", json_stream()); break;
+        case '\f': fputs("\\f", json_stream()); break;
+        case '\n': fputs("\\n", json_stream()); break;
+        case '\r': fputs("\\r", json_stream()); break;
+        case '\t': fputs("\\t", json_stream()); break;
         default:
-            if (*p < 0x20) printf("\\u%04x", (unsigned int)*p);
-            else putchar(*p);
+            if (*p < 0x20) fprintf(json_stream(), "\\u%04x", (unsigned int)*p);
+            else fputc(*p, json_stream());
         }
     }
-    putchar('"');
+    fputc('"', json_stream());
 }
 
 static const char *bounded_string(const char *value, const char *failure) {
@@ -89,25 +97,25 @@ static const char *scheme_from_colors(const Rgba *background, const Rgba *foregr
 
 static void output(const Font *font, double dpi, int scale, int xft_dpi,
                    const char *theme, const char *scheme, const char *accent) {
-    fputs("{\"schema\":1,\"font\":", stdout);
-    if (!font || !font->family) fputs("null", stdout);
+    fputs("{\"schema\":1,\"font\":", json_stream());
+    if (!font || !font->family) fputs("null", json_stream());
     else {
-        fputs("{\"family\":", stdout); json_string(font->family);
-        printf(",\"point_size\":%.8g,\"weight\":%d,\"italic\":%s,\"absolute_size\":%s}",
+        fputs("{\"family\":", json_stream()); json_string(font->family);
+        fprintf(json_stream(), ",\"point_size\":%.8g,\"weight\":%d,\"italic\":%s,\"absolute_size\":%s}",
                font->size, font->weight, font->italic ? "true" : "false",
                font->absolute ? "true" : "false");
     }
-    fputs(",\"font_dpi\":", stdout);
-    if (isfinite(dpi) && dpi > 0) printf("%.8g", dpi); else fputs("null", stdout);
-    printf(",\"widget_scale\":%d,\"xft_dpi\":%d,\"theme\":", scale, xft_dpi);
-    json_string(theme); fputs(",\"color_scheme\":", stdout); json_string(scheme);
-    fputs(",\"accent\":", stdout); json_string(accent);
-    fputs(",\"errors\":[", stdout);
+    fputs(",\"font_dpi\":", json_stream());
+    if (isfinite(dpi) && dpi > 0) fprintf(json_stream(), "%.8g", dpi); else fputs("null", json_stream());
+    fprintf(json_stream(), ",\"widget_scale\":%d,\"xft_dpi\":%d,\"theme\":", scale, xft_dpi);
+    json_string(theme); fputs(",\"color_scheme\":", json_stream()); json_string(scheme);
+    fputs(",\"accent\":", json_stream()); json_string(accent);
+    fputs(",\"errors\":[", json_stream());
     for (unsigned int i = 0; i < error_count; ++i) {
-        if (i) putchar(',');
+        if (i) fputc(',', json_stream());
         json_string(errors[i]);
     }
-    fputs("]}\n", stdout);
+    fputs("]}\n", json_stream());
 }
 
 #define DECLARE(result, name, arguments) static result (*name) arguments
@@ -262,7 +270,7 @@ API(Monitor *, XRRGetMonitors, (Display *, Window, int, int *));
 API(void, XRRFreeMonitors, (Monitor *));
 
 static void fail(const char *code) {
-    printf("{\"schema\":1,\"workarea\":null,\"errors\":[\"%s\"]}\n", code);
+    fprintf(json_stream(), "{\"schema\":1,\"workarea\":null,\"errors\":[\"%s\"]}\n", code);
 }
 
 static int property(Display *display, Window root, Atom atom, long limit,
@@ -330,7 +338,7 @@ static int workarea_main(void) {
     }
     {
         unsigned long *area = areas + selected * 4;
-        printf("{\"schema\":1,\"source\":\"x11-ewmh\",\"coordinate_space\":\"x11-root\","
+        fprintf(json_stream(), "{\"schema\":1,\"source\":\"x11-ewmh\",\"coordinate_space\":\"x11-root\","
                "\"root\":[0,0,%u,%u],\"workarea\":[%lu,%lu,%lu,%lu],"
                "\"desktop_selection\":\"%s\",\"monitors\":",
                width, height, area[0], area[1], area[2], area[3], selection);
@@ -352,17 +360,17 @@ static int workarea_main(void) {
                 }
             }
         }
-        if (!valid) fputs("null", stdout);
+        if (!valid) fputs("null", json_stream());
         else {
-            putchar('[');
+            fputc('[', json_stream());
             for (int i = 0; i < number; i++) {
-                if (i) putchar(',');
-                printf("[%d,%d,%d,%d]", monitors[i].x, monitors[i].y, monitors[i].width, monitors[i].height);
+                if (i) fputc(',', json_stream());
+                fprintf(json_stream(), "[%d,%d,%d,%d]", monitors[i].x, monitors[i].y, monitors[i].width, monitors[i].height);
             }
-            putchar(']');
+            fputc(']', json_stream());
         }
         if (monitors && XRRFreeMonitors) XRRFreeMonitors(monitors);
-        fputs(",\"errors\":[]}\n", stdout);
+        fputs(",\"errors\":[]}\n", json_stream());
     }
 done:
     if (failure) fail(failure);
@@ -378,7 +386,21 @@ done:
 
 
 int main(int argc, char **argv) {
-    if (argc == 2 && !strcmp(argv[1], "--workarea")) return workarea_main();
-    if (argc != 1) { fail("unsupported-probe-mode"); return 2; }
-    return appearance_main();
+    int original = dup(STDOUT_FILENO);
+    if (original < 0) return 3;
+    FILE *protocol = fdopen(original, "w");
+    if (!protocol) { close(original); return 3; }
+    if (fflush(stdout) == EOF || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) {
+        fclose(protocol);
+        return 3;
+    }
+    json_output = protocol;
+    int status;
+    if (argc == 2 && !strcmp(argv[1], "--workarea")) status = workarea_main();
+    else if (argc != 1) { fail("unsupported-probe-mode"); status = 2; }
+    else status = appearance_main();
+    if (fclose(protocol) == EOF) status = 3;
+    json_output = NULL;
+    /* Leave fd1 on stderr so late library/atexit messages cannot reach JSON. */
+    return status;
 }
