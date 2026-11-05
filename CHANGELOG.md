@@ -1,5 +1,10 @@
 # Changes
 
+## 1.2.2 - 2026-11-05
+
+- Update image and PDF dependencies to Pillow 13.0.0 and pypdf 6.21.4.
+- Point the Linux download instructions to the latest stable release.
+
 ## 1.2.1 — 2026-11-04
 
 - Open a fitted Appearance settings dialog directly, with system/custom font and accent choices and a reset to System. Linux desktop matching no longer needs system Python or PyGObject.
