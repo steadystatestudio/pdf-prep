@@ -7,10 +7,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import ctypes
+import errno
 import hashlib
 import math
 import os
 from pathlib import Path
+import shutil
+import sys
 import tempfile
 import threading
 from typing import Callable, Iterable
@@ -381,21 +385,76 @@ def build_pdf(pages: Iterable[Page], *, max_bytes: int | None = None,
                        rasterized)
 
 
+_NO_REPLACE_UNSUPPORTED = {errno.EPERM, errno.EOPNOTSUPP, errno.ENOSYS, errno.EXDEV, errno.EINVAL, errno.EACCES}
+
+
+def _new_file_mode() -> int:
+    """Ordinary permissions for a new document; mkstemp alone leaves it owner-only."""
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
+
+
+def _rename_no_replace(temporary, destination) -> bool:
+    """Linux renameat2(RENAME_NOREPLACE). False where the filesystem lacks it."""
+    if not sys.platform.startswith("linux"):
+        return False
+    rename = getattr(ctypes.CDLL(None, use_errno=True), "renameat2", None)
+    if rename is None:
+        return False
+    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.restype = ctypes.c_int
+    if rename(-100, os.fsencode(temporary), -100, os.fsencode(destination), 1) == 0:
+        return True
+    error = ctypes.get_errno()
+    if error in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+        return False
+    raise OSError(error, os.strerror(error), str(destination))
+
+
 def _commit_no_replace(temporary, destination):
+    """Publish the finished file without ever replacing an existing one.
+
+    USB sticks, memory cards and many network folders (FAT, exFAT, SMB) have no
+    hard links, so each platform tries the methods its filesystems support.
+    """
     if os.name == "nt":
         # Windows rename is atomic and refuses an existing destination. Using
         # a rename also supports Windows folders where hard links are denied.
         os.rename(temporary, destination)
-    else:
+        return
+    if _rename_no_replace(temporary, destination):
+        return
+    try:
         os.link(temporary, destination)
+        return
+    except FileExistsError:
+        raise
+    except OSError as exc:
+        if exc.errno not in _NO_REPLACE_UNSUPPORTED:
+            raise
+    # Exclusive creation still refuses an existing name. The copy is briefly
+    # visible while it is written; an incomplete copy of ours is removed.
+    descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _new_file_mode())
+    try:
+        with os.fdopen(descriptor, "wb") as output, open(temporary, "rb") as staged:
+            shutil.copyfileobj(staged, output)
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        try:
+            os.unlink(destination)
+        except OSError:
+            pass
+        raise
 
 
 def save_new_pdf(data: bytes, path: str | Path, source_paths: Iterable[str | Path] = ()) -> Path:
     """Commit complete bytes with an atomic no-replace operation.
 
-    A temporary file is staged in the destination directory. Windows rename or
-    POSIX hard-link commits it atomically without replacing an existing file.
-    Unsupported filesystems fail safely instead of falling back to overwrite.
+    A temporary file is staged in the destination directory, then published
+    with a no-replace rename, a hard link or exclusive creation, whichever the
+    destination filesystem supports. An existing file is never replaced.
     """
     destination = Path(path).resolve()
     if destination.suffix.lower() != ".pdf":
@@ -412,6 +471,11 @@ def save_new_pdf(data: bytes, path: str | Path, source_paths: Iterable[str | Pat
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
+            if os.name != "nt":
+                try:
+                    os.fchmod(stream.fileno(), _new_file_mode())
+                except OSError:
+                    pass  # The destination has no permission bits to set.
             os.fsync(stream.fileno())
         _commit_no_replace(temporary, destination)
     except FileExistsError:

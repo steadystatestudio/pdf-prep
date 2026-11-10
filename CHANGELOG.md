@@ -1,5 +1,10 @@
 # Changes
 
+## Unreleased
+
+- Save to USB sticks, memory cards and network folders on Linux. Saving previously needed hard links, which FAT, exFAT and many network filesystems do not have, so it failed there. An existing file is still never replaced.
+- Give a saved PDF ordinary file permissions on Linux instead of owner-only access.
+
 ## 1.2.2 - 2026-11-05
 
 - Update image and PDF dependencies to Pillow 13.0.0 and pypdf 6.21.4.
