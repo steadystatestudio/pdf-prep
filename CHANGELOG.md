@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 1.2.3 - 2026-11-09
 
 - Save to USB sticks, memory cards and network folders on Linux. Saving previously needed hard links, which FAT, exFAT and many network filesystems do not have, so it failed there. An existing file is still never replaced.
 - Give a saved PDF ordinary file permissions on Linux instead of owner-only access.
